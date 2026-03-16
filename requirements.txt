@@ -26,3 +26,13 @@ pyinstaller>=6.0.0
 # pip install chatterbox-tts
 # pip install TTS
 # pip install transformers torch
+
+# Optional: Voice cloning
+# pip install resemblyzer
+# pip install TTS  (for XTTS-v2)
+
+# Optional: Speaker diarization
+# pip install pyannote.audio
+
+# Optional: YouTube upload
+# pip install google-api-python-client google-auth-oauthlib
