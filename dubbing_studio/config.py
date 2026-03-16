@@ -199,8 +199,8 @@ class AppConfig:
         config.output_dir = os.environ.get("DUBBING_OUTPUT_DIR", "output")
         config.temp_dir = os.environ.get("DUBBING_TEMP_DIR", "temp")
 
-        whisper_model = os.environ.get("WHISPER_MODEL", "base")
-        if whisper_model in ("tiny", "base", "medium", "large-v3"):
+        whisper_model = os.environ.get("WHISPER_MODEL", "auto")
+        if whisper_model in ("auto", "tiny", "base", "small", "medium", "large-v3"):
             config.whisper.model_size = whisper_model
 
         return config
