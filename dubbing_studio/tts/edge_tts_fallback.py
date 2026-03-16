@@ -11,7 +11,6 @@ import json
 import logging
 import subprocess
 from pathlib import Path
-from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -86,6 +85,7 @@ def _run_async(coro):
         # We're inside an existing event loop (e.g., Gradio).
         # Create a new thread to run the coroutine.
         import concurrent.futures
+
         with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
             future = pool.submit(asyncio.run, coro)
             return future.result(timeout=120)
@@ -99,8 +99,11 @@ def generate_edge_tts(
     language: str = "en",
     gender: str = "male",
     speed: float = 1.0,
+    max_retries: int = 3,
 ) -> str:
-    """Generate speech using Microsoft Edge TTS.
+    """Generate speech using Microsoft Edge TTS with automatic retry.
+
+    Retries with exponential backoff on transient network errors.
 
     Args:
         text: Text to synthesize.
@@ -108,20 +111,21 @@ def generate_edge_tts(
         language: Language code.
         gender: Voice gender ('male' or 'female').
         speed: Speech speed multiplier (1.0 = normal).
+        max_retries: Maximum number of retry attempts on failure.
 
     Returns:
         Path to generated audio file.
 
     Raises:
         ImportError: If edge-tts is not installed.
-        RuntimeError: If TTS generation fails.
+        RuntimeError: If TTS generation fails after all retries.
     """
     try:
         import edge_tts
-    except ImportError:
+    except ImportError as e:
         raise ImportError(
             "edge-tts is required as fallback. Install with: pip install edge-tts"
-        )
+        ) from e
 
     Path(output_path).parent.mkdir(parents=True, exist_ok=True)
 
@@ -134,12 +138,35 @@ def generate_edge_tts(
 
     logger.info("Edge TTS: voice=%s, language=%s, speed=%s", voice, language, rate_str)
 
-    try:
-        _run_async(_generate())
-    except Exception as e:
-        raise RuntimeError(f"Edge TTS generation failed: {e}") from e
+    last_error: Exception | None = None
+    for attempt in range(max_retries + 1):
+        try:
+            _run_async(_generate())
+            return output_path
+        except Exception as e:
+            last_error = e
+            if attempt < max_retries:
+                wait_time = 2**attempt
+                logger.warning(
+                    "Edge TTS attempt %d/%d failed: %s. Retrying in %ds...",
+                    attempt + 1,
+                    max_retries + 1,
+                    e,
+                    wait_time,
+                )
+                import time
 
-    return output_path
+                time.sleep(wait_time)
+            else:
+                logger.error(
+                    "Edge TTS failed after %d attempts: %s",
+                    max_retries + 1,
+                    e,
+                )
+
+    raise RuntimeError(
+        f"Edge TTS generation failed after {max_retries + 1} attempts: {last_error}"
+    ) from last_error
 
 
 def get_audio_duration(path: str) -> float:
@@ -152,9 +179,13 @@ def get_audio_duration(path: str) -> float:
         Duration in seconds, or 0.0 on failure.
     """
     cmd = [
-        "ffprobe", "-v", "quiet",
-        "-print_format", "json",
-        "-show_format", path,
+        "ffprobe",
+        "-v",
+        "quiet",
+        "-print_format",
+        "json",
+        "-show_format",
+        path,
     ]
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode == 0:
@@ -166,7 +197,8 @@ def get_audio_duration(path: str) -> float:
 def is_edge_tts_available() -> bool:
     """Check if edge-tts package is installed."""
     try:
-        import edge_tts
+        import edge_tts  # noqa: F401
+
         return True
     except ImportError:
         return False
