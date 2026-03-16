@@ -604,34 +604,33 @@ def create_ui() -> gr.Blocks:
                 clear_logs_btn.click(fn=clear_logs, outputs=[log_output])
 
             # ── Tab 4: Models & Voices ──
-            with gr.Tab("Models & Voices", id="models"):
-                with gr.Row():
-                    with gr.Column():
-                        gr.Markdown("### Model Manager")
-                        gr.Markdown(
-                            "Models are downloaded automatically when first needed. "
-                            "Check status below to see which models are available."
-                        )
+            with gr.Tab("Models & Voices", id="models"), gr.Row():
+                with gr.Column():
+                    gr.Markdown("### Model Manager")
+                    gr.Markdown(
+                        "Models are downloaded automatically when first needed. "
+                        "Check status below to see which models are available."
+                    )
 
-                        model_status = gr.Textbox(
-                            label="Model Status",
-                            lines=12,
-                            interactive=False,
-                            value=get_model_status(),
-                        )
-                        model_refresh_btn = gr.Button("Refresh Status", size="sm")
-                        model_refresh_btn.click(fn=get_model_status, outputs=[model_status])
+                    model_status = gr.Textbox(
+                        label="Model Status",
+                        lines=12,
+                        interactive=False,
+                        value=get_model_status(),
+                    )
+                    model_refresh_btn = gr.Button("Refresh Status", size="sm")
+                    model_refresh_btn.click(fn=get_model_status, outputs=[model_status])
 
-                    with gr.Column():
-                        gr.Markdown("### Voice Library")
-                        voice_info = gr.Textbox(
-                            label="Available Voices",
-                            lines=12,
-                            interactive=False,
-                            value=get_voice_library_info(),
-                        )
-                        voice_refresh_btn = gr.Button("Refresh", size="sm")
-                        voice_refresh_btn.click(fn=get_voice_library_info, outputs=[voice_info])
+                with gr.Column():
+                    gr.Markdown("### Voice Library")
+                    voice_info = gr.Textbox(
+                        label="Available Voices",
+                        lines=12,
+                        interactive=False,
+                        value=get_voice_library_info(),
+                    )
+                    voice_refresh_btn = gr.Button("Refresh", size="sm")
+                    voice_refresh_btn.click(fn=get_voice_library_info, outputs=[voice_info])
 
             # ── Tab 5: System Info ──
             with gr.Tab("System Info", id="system"):

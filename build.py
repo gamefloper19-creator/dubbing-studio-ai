@@ -27,11 +27,6 @@ def check_prerequisites():
     """Check that all build prerequisites are met."""
     print("Checking prerequisites...")
 
-    # Check Python version
-    if sys.version_info < (3, 10):
-        print(f"ERROR: Python 3.10+ required, found {sys.version}")
-        return False
-
     # Check PyInstaller
     try:
         import PyInstaller
