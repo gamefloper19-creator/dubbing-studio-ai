@@ -1,12 +1,8 @@
 """
 Batch video dubbing processor with queue management.
 
-Supports processing up to 25 videos simultaneously with:
-- Per-job progress tracking with stage info
-- ETA estimation per job and overall batch
-- Retry on failure with exponential backoff
-- Job cancellation
-- Thread-safe queue management
+Supports processing 20-25 videos simultaneously with
+progress monitoring and error recovery.
 """
 
 import logging
@@ -82,8 +78,6 @@ class BatchProcessor:
         self._executor: Optional[ThreadPoolExecutor] = None
         self._progress_callback: Optional[Callable] = None
 
-    MAX_VIDEOS = 25
-
     def add_job(
         self,
         video_path: str,
@@ -102,27 +96,13 @@ class BatchProcessor:
 
         Returns:
             Job ID.
-
-        Raises:
-            ValueError: If queue is full (>25 videos) or video path is invalid.
         """
-        with self._lock:
-            if len(self._jobs) >= self.MAX_VIDEOS:
-                raise ValueError(
-                    f"Batch queue is full (maximum {self.MAX_VIDEOS} videos). "
-                    f"Clear completed jobs or wait for processing to finish."
-                )
-
-        video_file = Path(video_path)
-        if not video_file.exists():
-            raise FileNotFoundError(f"Video file not found: {video_path}")
-
         if job_id is None:
             job_id = f"job_{len(self._jobs) + 1:03d}_{int(time.time())}"
 
         job = BatchJob(
             job_id=job_id,
-            video_path=str(video_file.resolve()),
+            video_path=video_path,
             target_language=target_language,
             narrator_style=narrator_style,
         )
@@ -149,42 +129,11 @@ class BatchProcessor:
 
         Returns:
             List of job IDs.
-
-        Raises:
-            ValueError: If adding these videos would exceed the 25-video limit.
         """
-        if len(video_paths) > self.MAX_VIDEOS:
-            raise ValueError(
-                f"Cannot add {len(video_paths)} videos. "
-                f"Maximum batch size is {self.MAX_VIDEOS}."
-            )
-
-        with self._lock:
-            current_count = len(self._jobs)
-        remaining_capacity = self.MAX_VIDEOS - current_count
-        if len(video_paths) > remaining_capacity:
-            raise ValueError(
-                f"Cannot add {len(video_paths)} videos. "
-                f"Queue has {current_count} jobs, "
-                f"only {remaining_capacity} slots remaining."
-            )
-
         job_ids = []
-        skipped = []
         for path in video_paths:
-            try:
-                job_id = self.add_job(path, target_language, narrator_style)
-                job_ids.append(job_id)
-            except FileNotFoundError:
-                skipped.append(path)
-                logger.warning("Skipping missing file: %s", path)
-
-        if skipped:
-            logger.warning(
-                "Skipped %d missing files: %s",
-                len(skipped), ", ".join(skipped),
-            )
-
+            job_id = self.add_job(path, target_language, narrator_style)
+            job_ids.append(job_id)
         return job_ids
 
     def process_all(
@@ -305,7 +254,7 @@ class BatchProcessor:
                 time.sleep(2 ** attempt)  # exponential backoff
 
     def get_progress(self) -> BatchProgress:
-        """Get current batch processing progress with ETA estimation."""
+        """Get current batch processing progress."""
         with self._lock:
             total = len(self._jobs)
             completed = sum(
@@ -332,29 +281,14 @@ class BatchProcessor:
             else:
                 overall = 0.0
 
-            # Estimate remaining time based on completed job times
-            completed_times = [
-                j.end_time - j.start_time
+            # Estimate remaining time
+            remaining_estimates = [
+                j.estimated_remaining
                 for j in self._jobs.values()
-                if j.status == JobStatus.COMPLETED
-                and j.end_time > j.start_time
+                if j.status in (JobStatus.PROCESSING, JobStatus.RETRYING)
+                and j.estimated_remaining > 0
             ]
-
-            if completed_times:
-                avg_time = sum(completed_times) / len(completed_times)
-                remaining_jobs = queued + active
-                # Account for concurrency
-                concurrent = max(1, self.config.max_concurrent)
-                total_remaining = (remaining_jobs / concurrent) * avg_time
-            else:
-                # Use per-job estimates
-                remaining_estimates = [
-                    j.estimated_remaining
-                    for j in self._jobs.values()
-                    if j.status in (JobStatus.PROCESSING, JobStatus.RETRYING)
-                    and j.estimated_remaining > 0
-                ]
-                total_remaining = max(remaining_estimates) if remaining_estimates else 0.0
+            total_remaining = max(remaining_estimates) if remaining_estimates else 0.0
 
             return BatchProgress(
                 total_jobs=total,
@@ -365,28 +299,6 @@ class BatchProcessor:
                 overall_progress=overall,
                 estimated_total_remaining=total_remaining,
             )
-
-    def get_job_summaries(self) -> list[dict]:
-        """Get a summary of all jobs for UI display."""
-        summaries = []
-        with self._lock:
-            for job in self._jobs.values():
-                elapsed = 0.0
-                if job.start_time > 0:
-                    end = job.end_time if job.end_time > 0 else time.time()
-                    elapsed = end - job.start_time
-
-                summaries.append({
-                    "job_id": job.job_id,
-                    "video": Path(job.video_path).name,
-                    "status": job.status.value,
-                    "progress": f"{job.progress * 100:.0f}%",
-                    "stage": job.current_stage,
-                    "elapsed": f"{elapsed:.1f}s",
-                    "eta": f"{job.estimated_remaining:.0f}s" if job.estimated_remaining > 0 else "-",
-                    "error": job.error_message[:100] if job.error_message else "",
-                })
-        return summaries
 
     def get_job(self, job_id: str) -> Optional[BatchJob]:
         """Get a specific job by ID."""

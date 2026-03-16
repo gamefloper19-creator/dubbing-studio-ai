@@ -3,19 +3,14 @@ LuxTTS engine integration.
 
 LuxTTS provides calm, neutral voice synthesis
 suitable for European language narration.
-
-Falls back to Edge TTS when the native model is unavailable.
 """
 
+import json
 import logging
+import subprocess
 from pathlib import Path
 from typing import Optional
 
-from dubbing_studio.tts.edge_tts_fallback import (
-    generate_edge_tts,
-    get_audio_duration,
-    is_edge_tts_available,
-)
 from dubbing_studio.tts.engine import TTSEngine, TTSResult
 
 logger = logging.getLogger(__name__)
@@ -101,7 +96,7 @@ class LuxTTS(TTSEngine):
             speed=speed,
         )
 
-        duration = get_audio_duration(output_path)
+        duration = self._get_audio_duration(output_path)
 
         return TTSResult(
             audio_path=output_path,
@@ -117,16 +112,34 @@ class LuxTTS(TTSEngine):
         language: str,
         speed: float,
     ) -> TTSResult:
-        """Fallback to Edge TTS for calm, neutral voices."""
-        generate_edge_tts(
-            text=text,
-            output_path=output_path,
-            language=language,
-            gender="male",
-            speed=speed,
-        )
+        """Fallback to edge-tts for calm, neutral voices."""
+        try:
+            import edge_tts
+            import asyncio
+        except ImportError:
+            raise ImportError(
+                "edge-tts is required as fallback. Install with: pip install edge-tts"
+            )
 
-        duration = get_audio_duration(output_path)
+        voice_map = {
+            "en": "en-GB-RyanNeural",
+            "fr": "fr-FR-HenriNeural",
+            "nl": "nl-NL-MaartenNeural",
+            "sv": "sv-SE-MattiasNeural",
+            "da": "da-DK-JeppeNeural",
+            "de": "de-DE-KillianNeural",
+        }
+
+        voice = voice_map.get(language, "en-GB-RyanNeural")
+        rate_str = f"+{int((speed - 1) * 100)}%" if speed >= 1 else f"{int((speed - 1) * 100)}%"
+
+        async def _generate():
+            communicate = edge_tts.Communicate(text, voice, rate=rate_str)
+            await communicate.save(output_path)
+
+        asyncio.run(_generate())
+
+        duration = self._get_audio_duration(output_path)
 
         return TTSResult(
             audio_path=output_path,
@@ -134,6 +147,19 @@ class LuxTTS(TTSEngine):
             sample_rate=24000,
             text=text,
         )
+
+    def _get_audio_duration(self, path: str) -> float:
+        """Get audio file duration."""
+        cmd = [
+            "ffprobe", "-v", "quiet",
+            "-print_format", "json",
+            "-show_format", path,
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.returncode == 0:
+            info = json.loads(result.stdout)
+            return float(info.get("format", {}).get("duration", 0))
+        return 0.0
 
     def list_voices(self, language: str = "") -> list[dict]:
         """List available voices."""
@@ -147,8 +173,11 @@ class LuxTTS(TTSEngine):
 
     def is_available(self) -> bool:
         """Check if LuxTTS or fallback is available."""
-        if is_edge_tts_available():
+        try:
+            import edge_tts
             return True
+        except ImportError:
+            pass
         try:
             from TTS.api import TTS
             return True

@@ -3,19 +3,14 @@ Chatterbox TTS engine integration.
 
 Chatterbox provides high-quality, expressive voice synthesis
 particularly suited for cinematic and storytelling narration.
-
-Falls back to Edge TTS when the native model is unavailable.
 """
 
+import json
 import logging
+import subprocess
 from pathlib import Path
 from typing import Optional
 
-from dubbing_studio.tts.edge_tts_fallback import (
-    generate_edge_tts,
-    get_audio_duration,
-    is_edge_tts_available,
-)
 from dubbing_studio.tts.engine import TTSEngine, TTSResult
 
 logger = logging.getLogger(__name__)
@@ -124,16 +119,33 @@ class ChatterboxTTS(TTSEngine):
         language: str,
         speed: float,
     ) -> TTSResult:
-        """Fallback to Edge TTS."""
-        generate_edge_tts(
-            text=text,
-            output_path=output_path,
-            language=language,
-            gender="male",
-            speed=speed,
-        )
+        """Fallback to edge-tts."""
+        try:
+            import edge_tts
+            import asyncio
+        except ImportError:
+            raise ImportError(
+                "edge-tts is required as fallback. Install with: pip install edge-tts"
+            )
 
-        duration = get_audio_duration(output_path)
+        voice_map = {
+            "en": "en-US-ChristopherNeural",
+            "es": "es-ES-AlvaroNeural",
+            "pt": "pt-BR-AntonioNeural",
+            "it": "it-IT-DiegoNeural",
+            "fr": "fr-FR-HenriNeural",
+        }
+
+        voice = voice_map.get(language, "en-US-ChristopherNeural")
+        rate_str = f"+{int((speed - 1) * 100)}%" if speed >= 1 else f"{int((speed - 1) * 100)}%"
+
+        async def _generate():
+            communicate = edge_tts.Communicate(text, voice, rate=rate_str)
+            await communicate.save(output_path)
+
+        asyncio.run(_generate())
+
+        duration = self._get_audio_duration(output_path)
 
         return TTSResult(
             audio_path=output_path,
@@ -141,6 +153,19 @@ class ChatterboxTTS(TTSEngine):
             sample_rate=24000,
             text=text,
         )
+
+    def _get_audio_duration(self, path: str) -> float:
+        """Get audio file duration."""
+        cmd = [
+            "ffprobe", "-v", "quiet",
+            "-print_format", "json",
+            "-show_format", path,
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.returncode == 0:
+            info = json.loads(result.stdout)
+            return float(info.get("format", {}).get("duration", 0))
+        return 0.0
 
     def list_voices(self, language: str = "") -> list[dict]:
         """List available voices."""
@@ -154,9 +179,12 @@ class ChatterboxTTS(TTSEngine):
         return voices
 
     def is_available(self) -> bool:
-        """Check if Chatterbox or fallback is available."""
-        if is_edge_tts_available():
+        """Check if Chatterbox is available."""
+        try:
+            import edge_tts
             return True
+        except ImportError:
+            pass
         try:
             from chatterbox.tts import ChatterboxTTS
             return True

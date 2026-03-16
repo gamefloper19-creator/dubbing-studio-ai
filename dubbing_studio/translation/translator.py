@@ -1,10 +1,5 @@
 """
-Smart translation engine using Google Gemini.
-
-Performs semantic translation optimized for documentary narration,
-maintaining natural storytelling tone rather than word-for-word
-translation. Supports context-aware batch translation with
-automatic retry and rate limiting.
+Smart translation engine using Google Gemini or compatible providers.
 """
 
 import logging
@@ -50,7 +45,7 @@ class Translator:
             raise ValueError(f"Unsupported translation provider: {self.config.provider}")
 
     def _init_gemini(self) -> None:
-        """Initialize Google Gemini client for semantic translation."""
+        """Initialize Google Gemini client."""
         try:
             import google.generativeai as genai
         except ImportError:
@@ -58,11 +53,6 @@ class Translator:
                 "Google Generative AI SDK not installed. "
                 "Install with: pip install google-generativeai"
             )
-
-        if not self.config.api_key:
-            # Try environment variable as fallback
-            import os
-            self.config.api_key = os.environ.get("GEMINI_API_KEY", "")
 
         if not self.config.api_key:
             raise ValueError(
@@ -203,14 +193,7 @@ class Translator:
         source_language: str,
         context: str,
     ) -> str:
-        """Build the translation prompt optimized for narration style.
-
-        The prompt instructs Gemini to:
-        - Use semantic (not literal) translation
-        - Maintain documentary narration tone
-        - Adapt sentence length for spoken delivery
-        - Preserve dramatic pacing and emphasis
-        """
+        """Build the translation prompt with narration style instructions."""
         parts = [self.config.system_prompt, ""]
 
         if source_language:
@@ -222,9 +205,8 @@ class Translator:
 
         parts.append(f"\nText to translate:\n{text}")
         parts.append(
-            "\nIMPORTANT: Provide ONLY the translated text, nothing else. "
-            "No explanations, no quotation marks, no labels, no notes. "
-            "The translation should sound natural when read aloud as narration."
+            "\nProvide ONLY the translated text, nothing else. "
+            "No explanations, no quotation marks, no labels."
         )
 
         return "\n".join(parts)

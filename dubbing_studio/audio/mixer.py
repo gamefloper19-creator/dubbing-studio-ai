@@ -1,11 +1,5 @@
 """
 Audio mixing for combining narration with background audio.
-
-Features:
-- Simple volume-based mixing
-- Automatic ducking via sidechain compression
-- Volume-envelope ducking with configurable attack/release
-- Crossfade transitions between narration segments
 """
 
 import logging
@@ -99,27 +93,13 @@ class AudioMixer:
         """
         Mix with automatic ducking based on narration segments.
 
-        Background audio volume is reduced when narration is active,
-        with smooth attack/release transitions for natural-sounding results.
-
-        Uses FFmpeg's sidechaincompress filter for real-time ducking driven
-        by the narration signal.
+        Background audio is reduced when narration is active.
         """
         bg_vol = self.config.background_volume
         duck_ratio = self.config.ducking_ratio
         crossfade = self.config.crossfade_duration
 
-        # Method 1: Volume-envelope ducking using segment boundaries
-        # Build a volume automation curve for the background based on segments
-        if segments:
-            envelope_result = self._mix_with_volume_envelope(
-                narration_path, background_path, output_path,
-                segments, bg_vol, duck_ratio, crossfade,
-            )
-            if envelope_result:
-                return envelope_result
-
-        # Method 2: Sidechain compression based ducking (signal-driven)
+        # Use sidechaincompress for automatic ducking
         cmd = [
             "ffmpeg", "-y",
             "-i", narration_path,
@@ -137,95 +117,12 @@ class AudioMixer:
             output_path,
         ]
 
-        logger.info("Mixing audio with sidechain ducking")
+        logger.info("Mixing audio with ducking")
         result = subprocess.run(cmd, capture_output=True, text=True)
 
         if result.returncode != 0:
             logger.warning("Ducking mix failed, falling back to simple mix")
             return self._simple_mix(narration_path, background_path, output_path)
-
-        return output_path
-
-    def _mix_with_volume_envelope(
-        self,
-        narration_path: str,
-        background_path: str,
-        output_path: str,
-        segments: list[dict],
-        bg_vol: float,
-        duck_ratio: float,
-        crossfade: float,
-    ) -> Optional[str]:
-        """
-        Mix using a volume automation envelope for the background.
-
-        Creates smooth volume transitions around narration segments:
-        - Full volume between segments
-        - Ducked volume during narration
-        - Smooth fade transitions at boundaries
-        """
-        if not segments:
-            return None
-
-        # Build volume keypoints for the background
-        # Format: "volume=enable='between(t,start,end)':volume=ratio"
-        ducked_vol = duck_ratio * bg_vol
-        full_vol = bg_vol
-
-        # Build volume filter with smooth transitions using geq
-        volume_exprs = []
-        for seg in segments:
-            start = seg.get("start_time", seg.get("start", 0))
-            end = seg.get("end_time", seg.get("end", 0))
-            fade_in_start = max(0, start - crossfade)
-            fade_out_end = end + crossfade
-
-            volume_exprs.append(
-                f"if(between(t,{fade_in_start:.3f},{start:.3f}),"
-                f"{full_vol}-({full_vol}-{ducked_vol})*(t-{fade_in_start:.3f})/{crossfade:.3f},"
-                f"if(between(t,{start:.3f},{end:.3f}),{ducked_vol},"
-                f"if(between(t,{end:.3f},{fade_out_end:.3f}),"
-                f"{ducked_vol}+({full_vol}-{ducked_vol})*(t-{end:.3f})/{crossfade:.3f},1)))"
-            )
-
-        # Chain the volume expressions: default to full_vol, apply each ducking region
-        if len(volume_exprs) > 10:
-            # Too many segments for complex expression, fall back to sidechain
-            logger.info(
-                "Too many segments (%d) for volume envelope, using sidechain",
-                len(volume_exprs),
-            )
-            return None
-
-        # Simplified approach: use sidechaincompress which handles all cases well
-        # The volume envelope is too complex for many segments
-        cmd = [
-            "ffmpeg", "-y",
-            "-i", narration_path,
-            "-i", background_path,
-            "-filter_complex", (
-                f"[1:a]volume={bg_vol}[bg];"
-                f"[0:a]asplit=2[narr][sc];"
-                f"[bg][sc]sidechaincompress="
-                f"threshold=0.005:ratio=15:"
-                f"attack={max(5, int(crossfade * 500))}:"
-                f"release={max(100, int(crossfade * 3000))}"
-                f"[ducked_bg];"
-                f"[narr][ducked_bg]amix=inputs=2:duration=longest"
-                f":dropout_transition=2"
-            ),
-            "-ac", "2",
-            output_path,
-        ]
-
-        logger.info("Mixing audio with envelope-aware ducking")
-        result = subprocess.run(cmd, capture_output=True, text=True)
-
-        if result.returncode != 0:
-            logger.warning(
-                "Envelope ducking failed: %s", result.stderr[:300]
-            )
-            return None
 
         return output_path
 

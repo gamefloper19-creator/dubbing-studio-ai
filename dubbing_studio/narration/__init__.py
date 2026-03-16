@@ -1,0 +1,1 @@
+"""Cinematic narration engine module."""
