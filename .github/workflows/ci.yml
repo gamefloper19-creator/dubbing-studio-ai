@@ -34,7 +34,7 @@ jobs:
 
       - name: Lint with ruff
         run: |
-          ruff check dubbing_studio/ app.py main.py --select E,F,W --ignore E501,W503
+          ruff check dubbing_studio/ app.py main.py --select E,F,W --ignore E501
 
       - name: Verify imports
         run: |

@@ -18,7 +18,6 @@ Coordinates all stages of the dubbing process:
 """
 
 import logging
-import os
 import shutil
 import time
 from dataclasses import dataclass, field
