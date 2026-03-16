@@ -228,8 +228,8 @@ class AppConfig:
         config.cache_dir = os.environ.get("DUBBING_CACHE_DIR", "cache")
 
         # Whisper
-        whisper_model = os.environ.get("WHISPER_MODEL", "base")
-        if whisper_model in ("tiny", "base", "small", "medium", "large-v3"):
+        whisper_model = os.environ.get("WHISPER_MODEL", "auto")
+        if whisper_model in ("auto", "tiny", "base", "small", "medium", "large-v3"):
             config.whisper.model_size = whisper_model
 
         # Voice

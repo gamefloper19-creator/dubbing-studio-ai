@@ -61,7 +61,7 @@ def get_hardware_info():
 # ── Language options ──
 LANGUAGE_CHOICES = [(name, code) for code, name in sorted(SUPPORTED_LANGUAGES.items(), key=lambda x: x[1])]
 NARRATOR_STYLES = ["documentary", "cinematic", "calm", "storytelling"]
-WHISPER_MODELS = ["tiny", "base", "medium", "large-v3"]
+WHISPER_MODELS = ["auto", "tiny", "base", "small", "medium", "large-v3"]
 SUBTITLE_FORMATS = ["srt", "vtt", "ass"]
 
 
@@ -78,7 +78,13 @@ def process_single_video(
     gemini_api_key: str,
     progress=gr.Progress(track_tqdm=True),
 ):
-    """Process a single video through the dubbing pipeline."""
+    """Process a single video through the full dubbing pipeline.
+
+    Pipeline stages:
+    video -> audio extraction -> segmentation -> speech recognition ->
+    translation -> TTS narration -> timing alignment -> background mixing ->
+    final video render.
+    """
     if video_file is None:
         return None, None, None, "Please upload a video file."
 
@@ -102,10 +108,12 @@ def process_single_video(
     pipeline = get_pipeline()
 
     status_log = []
+    start_time = time.time()
 
     def on_progress(stage: str, prog: float):
         pct = int(prog * 100)
-        status_log.append(f"[{pct:3d}%] {stage}")
+        elapsed = time.time() - start_time
+        status_log.append(f"[{pct:3d}%] {stage} ({elapsed:.1f}s)")
         progress(prog, desc=stage)
 
     try:
@@ -118,7 +126,8 @@ def process_single_video(
             progress_callback=on_progress,
         )
 
-        # Build status summary
+        # Build status summary with pipeline stage details
+        total_elapsed = time.time() - start_time
         summary = (
             f"Dubbing Complete!\n"
             f"─────────────────────────────\n"
@@ -126,7 +135,8 @@ def process_single_video(
             f"Target Language: {result.target_language}\n"
             f"Segments: {result.total_segments}\n"
             f"Duration: {result.total_duration:.1f}s\n"
-            f"Processing Time: {result.processing_time:.1f}s\n"
+            f"Processing Time: {total_elapsed:.1f}s\n"
+            f"Whisper Model: {whisper_model}\n"
         )
         if result.narration_style:
             summary += (
@@ -134,6 +144,7 @@ def process_single_video(
                 f"{result.narration_style.tone}, "
                 f"{result.narration_style.pacing} pace\n"
             )
+        summary += f"\n─── Pipeline Log ───\n" + "\n".join(status_log[-15:])
 
         # Return outputs
         subtitle_file = None
@@ -167,9 +178,15 @@ def process_batch_videos(
     max_concurrent: int,
     progress=gr.Progress(track_tqdm=True),
 ):
-    """Process multiple videos in batch."""
+    """Process multiple videos in batch with per-video progress tracking.
+
+    Supports up to 25 videos with queue management and ETA estimation.
+    """
     if not video_files:
         return "No videos uploaded."
+
+    if len(video_files) > 25:
+        return "Maximum 25 videos allowed per batch. Please reduce your selection."
 
     if not gemini_api_key and not os.environ.get("GEMINI_API_KEY"):
         return "Please provide a Gemini API key for translation."
@@ -183,31 +200,43 @@ def process_batch_videos(
     config.subtitle.format = subtitle_format
     config.mixing.background_volume = bg_volume / 100.0
     config.voice.narrator_style = narrator_style
-    config.batch.max_concurrent = max_concurrent
+    config.batch.max_concurrent = min(max_concurrent, 25)
 
-    global _pipeline
+    global _pipeline, _batch_processor
     _pipeline = DubbingPipeline(config)
     pipeline = get_pipeline()
 
     # Setup batch processor
     batch = BatchProcessor(config.batch)
+    _batch_processor = batch
 
     video_paths = []
     for vf in video_files:
         path = vf if isinstance(vf, str) else vf.name
         video_paths.append(path)
 
-    batch.add_videos(video_paths, target_language, narrator_style)
+    try:
+        batch.add_videos(video_paths, target_language, narrator_style)
+    except (ValueError, FileNotFoundError) as e:
+        return f"Error adding videos: {e}"
 
-    status_lines = [f"Batch Processing: {len(video_paths)} videos"]
-    status_lines.append(f"Target Language: {SUPPORTED_LANGUAGES.get(target_language, target_language)}")
-    status_lines.append(f"Max Concurrent: {max_concurrent}")
-    status_lines.append("─" * 40)
+    batch_start = time.time()
+    status_lines = [
+        f"Batch Processing: {len(video_paths)} videos",
+        f"Target Language: {SUPPORTED_LANGUAGES.get(target_language, target_language)}",
+        f"Whisper Model: {whisper_model}",
+        f"Max Concurrent: {config.batch.max_concurrent}",
+        "─" * 50,
+    ]
 
     def on_batch_progress(batch_progress):
+        elapsed = time.time() - batch_start
         progress(
             batch_progress.overall_progress,
-            desc=f"Batch: {batch_progress.completed_jobs}/{batch_progress.total_jobs} done",
+            desc=(
+                f"Batch: {batch_progress.completed_jobs}/{batch_progress.total_jobs} done "
+                f"({elapsed:.0f}s elapsed)"
+            ),
         )
 
     try:
@@ -216,26 +245,38 @@ def process_batch_videos(
             progress_callback=on_batch_progress,
         )
 
-        # Build results summary
-        for job in jobs:
-            status = "DONE" if job.status == JobStatus.COMPLETED else "FAILED"
+        total_elapsed = time.time() - batch_start
+
+        # Build per-video results summary
+        status_lines.append("Per-Video Results:")
+        for i, job in enumerate(jobs, 1):
             video_name = Path(job.video_path).name
             if job.status == JobStatus.COMPLETED:
                 elapsed = job.end_time - job.start_time
-                status_lines.append(f"  [{status}] {video_name} ({elapsed:.1f}s) -> {job.output_path}")
+                status_lines.append(
+                    f"  {i:2d}. [DONE] {video_name} ({elapsed:.1f}s)"
+                )
+                if job.output_path:
+                    status_lines.append(f"      Output: {job.output_path}")
             else:
-                status_lines.append(f"  [{status}] {video_name}: {job.error_message[:100]}")
+                status_lines.append(
+                    f"  {i:2d}. [FAIL] {video_name}"
+                )
+                if job.error_message:
+                    status_lines.append(f"      Error: {job.error_message[:120]}")
 
         batch_info = batch.get_progress()
-        status_lines.append("─" * 40)
+        status_lines.append("─" * 50)
         status_lines.append(
-            f"Results: {batch_info.completed_jobs} completed, "
-            f"{batch_info.failed_jobs} failed"
+            f"Summary: {batch_info.completed_jobs} completed, "
+            f"{batch_info.failed_jobs} failed, "
+            f"Total time: {total_elapsed:.1f}s"
         )
 
         return "\n".join(status_lines)
 
     except Exception as e:
+        logger.error("Batch processing failed: %s", e, exc_info=True)
         return f"Batch processing failed: {str(e)}"
 
 
@@ -279,6 +320,18 @@ def create_ui() -> gr.Blocks:
         .stage-info {
             font-family: monospace;
             font-size: 13px;
+            white-space: pre-wrap;
+        }
+        .batch-status {
+            font-family: monospace;
+            font-size: 12px;
+            white-space: pre-wrap;
+        }
+        .pipeline-info {
+            background: #f0f4f8;
+            padding: 10px;
+            border-radius: 8px;
+            margin-top: 8px;
         }
         """,
     ) as app:
@@ -322,9 +375,9 @@ def create_ui() -> gr.Blocks:
                         with gr.Accordion("Advanced Settings", open=False):
                             whisper_model_input = gr.Dropdown(
                                 choices=WHISPER_MODELS,
-                                value="base",
+                                value="auto",
                                 label="Whisper Model",
-                                info="Larger models are more accurate but slower",
+                                info="'auto' selects the best model for your hardware",
                             )
 
                             embed_subs = gr.Checkbox(
@@ -403,12 +456,16 @@ def create_ui() -> gr.Blocks:
 
             # ── Tab 2: Batch Processing ──
             with gr.Tab("Batch Dubbing", id="batch"):
+                gr.Markdown(
+                    "Upload up to **25 videos** for batch dubbing. "
+                    "Videos are processed concurrently with per-video progress tracking."
+                )
                 with gr.Row():
                     with gr.Column(scale=1):
                         gr.Markdown("### Batch Upload")
 
                         batch_videos = gr.File(
-                            label="Upload Videos (up to 25)",
+                            label="Upload Videos (drag & drop up to 25)",
                             file_count="multiple",
                             file_types=["video"],
                         )
@@ -431,14 +488,15 @@ def create_ui() -> gr.Blocks:
                             value=4,
                             step=1,
                             label="Max Concurrent Jobs",
-                            info="Number of videos to process simultaneously",
+                            info="Number of videos to process simultaneously (up to 25)",
                         )
 
                         with gr.Accordion("Advanced Settings", open=False):
                             batch_whisper = gr.Dropdown(
                                 choices=WHISPER_MODELS,
-                                value="base",
+                                value="auto",
                                 label="Whisper Model",
+                                info="'auto' selects based on hardware",
                             )
 
                             batch_embed_subs = gr.Checkbox(
@@ -476,10 +534,10 @@ def create_ui() -> gr.Blocks:
                         gr.Markdown("### Batch Results")
 
                         batch_status = gr.Textbox(
-                            label="Batch Status",
-                            lines=20,
+                            label="Batch Status & Per-Video Progress",
+                            lines=25,
                             interactive=False,
-                            elem_classes=["stage-info"],
+                            elem_classes=["batch-status"],
                         )
 
                 batch_btn.click(
@@ -514,22 +572,28 @@ def create_ui() -> gr.Blocks:
 
                 gr.Markdown(
                     """
-                    ### Pipeline Stages
+                    ### Full Dubbing Pipeline
+                    The pipeline processes each video through these stages:
                     """
-                    + "\n".join(f"{i+1}. {stage}" for i, stage in enumerate(PIPELINE_STAGES))
+                    + "\n".join(f"{i+1}. **{stage}**" for i, stage in enumerate(PIPELINE_STAGES))
                     + """
 
-                    ### Supported Languages
+                    ### Supported Languages (24)
                     """
                     + ", ".join(f"{name} ({code})" for code, name in sorted(SUPPORTED_LANGUAGES.items(), key=lambda x: x[1]))
                     + """
 
-                    ### Voice Engines
+                    ### Voice Engines (with automatic fallback)
                     - **Qwen3-TTS** — Best for Asian and Middle Eastern languages
                     - **Chatterbox** — Best for cinematic English, Spanish, Portuguese, Italian
                     - **LuxTTS** — Best for calm European narration (French, Dutch, Swedish, Danish)
+                    - **Edge TTS** — Universal fallback for all languages
 
-                    All engines fall back to Microsoft Edge TTS when native models are unavailable.
+                    ### Key Features
+                    - **Auto Whisper Model Selection**: Automatically picks the best model for your GPU/CPU
+                    - **Timing Alignment**: Generated narration matches original duration (< 300ms deviation)
+                    - **Background Audio Ducking**: Background audio is smoothly reduced during narration
+                    - **Batch Processing**: Process up to 25 videos concurrently with progress tracking
                     """
                 )
 
