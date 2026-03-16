@@ -16,6 +16,24 @@ from dubbing_studio.tts.engine import TTSEngine, TTSResult
 logger = logging.getLogger(__name__)
 
 
+def _run_async(coro):
+    """Run an async coroutine, handling the case where an event loop is already running."""
+    import asyncio
+
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+
+    if loop and loop.is_running():
+        import concurrent.futures
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+            future = pool.submit(asyncio.run, coro)
+            return future.result()
+    else:
+        return asyncio.run(coro)
+
+
 class ChatterboxTTS(TTSEngine):
     """
     Chatterbox TTS engine.
@@ -143,7 +161,7 @@ class ChatterboxTTS(TTSEngine):
             communicate = edge_tts.Communicate(text, voice, rate=rate_str)
             await communicate.save(output_path)
 
-        asyncio.run(_generate())
+        _run_async(_generate())
 
         duration = self._get_audio_duration(output_path)
 

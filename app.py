@@ -16,7 +16,9 @@ from dubbing_studio import __app_name__, __version__
 from dubbing_studio.batch.processor import BatchProcessor, JobStatus
 from dubbing_studio.config import AppConfig, SUPPORTED_LANGUAGES
 from dubbing_studio.hardware.optimizer import HardwareOptimizer
+from dubbing_studio.models.manager import ModelManager
 from dubbing_studio.pipeline import DubbingPipeline, PIPELINE_STAGES
+from dubbing_studio.tts.voice_library import VoiceLibrary
 
 # Configure logging
 logging.basicConfig(
@@ -24,6 +26,31 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
 )
 logger = logging.getLogger(__name__)
+
+# ── Real-time log capture ──
+_log_buffer: list[str] = []
+_MAX_LOG_LINES = 200
+
+
+class GUILogHandler(logging.Handler):
+    """Capture log messages for the GUI log panel."""
+
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            msg = self.format(record)
+            _log_buffer.append(msg)
+            if len(_log_buffer) > _MAX_LOG_LINES:
+                _log_buffer.pop(0)
+        except Exception:
+            pass
+
+
+# Attach the GUI log handler to the root logger
+_gui_handler = GUILogHandler()
+_gui_handler.setFormatter(
+    logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s", datefmt="%H:%M:%S")
+)
+logging.getLogger().addHandler(_gui_handler)
 
 # ── Global state ──
 _config: Optional[AppConfig] = None
@@ -260,6 +287,61 @@ def get_system_info():
         return f"Hardware detection error: {e}"
 
 
+def get_model_status():
+    """Get model installation status for display."""
+    try:
+        manager = ModelManager()
+        results = manager.preload_essential_models()
+        lines = ["Model Availability:"]
+        lines.append("-" * 40)
+        for name, available in results.items():
+            status = "Installed" if available else "Not Installed"
+            lines.append(f"  {name}: {status}")
+        lines.append("")
+        lines.append(f"Model cache: {manager.cache_dir}")
+        lines.append(f"Cache size: {manager.get_cache_size_mb():.1f} MB")
+        return "\n".join(lines)
+    except Exception as e:
+        return f"Model status check error: {e}"
+
+
+def get_voice_library_info():
+    """Get voice library information for display."""
+    try:
+        library = VoiceLibrary()
+        voices = library.get_all_voices()
+        summary = library.get_engine_summary()
+
+        lines = [f"Total voices: {len(voices)}"]
+        lines.append("-" * 40)
+        lines.append("Voices per engine:")
+        for engine, count in sorted(summary.items()):
+            lines.append(f"  {engine}: {count}")
+        lines.append("")
+        lines.append("Languages with voice support:")
+        supported = library.get_supported_languages()
+        for code, name in sorted(supported.items(), key=lambda x: x[1]):
+            lang_voices = library.get_voices_for_language(code)
+            lines.append(f"  {name} ({code}): {len(lang_voices)} voices")
+
+        return "\n".join(lines)
+    except Exception as e:
+        return f"Voice library error: {e}"
+
+
+def get_real_time_logs():
+    """Get the current real-time log buffer contents."""
+    if not _log_buffer:
+        return "No log messages yet. Process a video to see real-time logs."
+    return "\n".join(_log_buffer[-100:])
+
+
+def clear_logs():
+    """Clear the log buffer."""
+    _log_buffer.clear()
+    return "Logs cleared."
+
+
 # ── Build Gradio Interface ──
 
 def create_ui() -> gr.Blocks:
@@ -279,6 +361,10 @@ def create_ui() -> gr.Blocks:
         .stage-info {
             font-family: monospace;
             font-size: 13px;
+        }
+        .log-panel {
+            font-family: monospace;
+            font-size: 12px;
         }
         """,
     ) as app:
@@ -498,7 +584,56 @@ def create_ui() -> gr.Blocks:
                     outputs=[batch_status],
                 )
 
-            # ── Tab 3: System Info ──
+            # ── Tab 3: Real-Time Logs ──
+            with gr.Tab("Logs", id="logs"):
+                gr.Markdown("### Real-Time Processing Logs")
+
+                log_output = gr.Textbox(
+                    label="Log Output",
+                    lines=25,
+                    interactive=False,
+                    elem_classes=["log-panel"],
+                    value="No log messages yet. Process a video to see real-time logs.",
+                )
+
+                with gr.Row():
+                    refresh_logs_btn = gr.Button("Refresh Logs", size="sm")
+                    clear_logs_btn = gr.Button("Clear Logs", size="sm", variant="secondary")
+
+                refresh_logs_btn.click(fn=get_real_time_logs, outputs=[log_output])
+                clear_logs_btn.click(fn=clear_logs, outputs=[log_output])
+
+            # ── Tab 4: Models & Voices ──
+            with gr.Tab("Models & Voices", id="models"):
+                with gr.Row():
+                    with gr.Column():
+                        gr.Markdown("### Model Manager")
+                        gr.Markdown(
+                            "Models are downloaded automatically when first needed. "
+                            "Check status below to see which models are available."
+                        )
+
+                        model_status = gr.Textbox(
+                            label="Model Status",
+                            lines=12,
+                            interactive=False,
+                            value=get_model_status(),
+                        )
+                        model_refresh_btn = gr.Button("Refresh Status", size="sm")
+                        model_refresh_btn.click(fn=get_model_status, outputs=[model_status])
+
+                    with gr.Column():
+                        gr.Markdown("### Voice Library")
+                        voice_info = gr.Textbox(
+                            label="Available Voices",
+                            lines=12,
+                            interactive=False,
+                            value=get_voice_library_info(),
+                        )
+                        voice_refresh_btn = gr.Button("Refresh", size="sm")
+                        voice_refresh_btn.click(fn=get_voice_library_info, outputs=[voice_info])
+
+            # ── Tab 5: System Info ──
             with gr.Tab("System Info", id="system"):
                 gr.Markdown("### Hardware & System Information")
 
@@ -545,6 +680,12 @@ def create_ui() -> gr.Blocks:
 
 def main():
     """Launch the Dubbing Studio application."""
+    logger.info("Starting %s v%s ...", __app_name__, __version__)
+
+    # Pre-check models
+    manager = ModelManager()
+    manager.preload_essential_models()
+
     app = create_ui()
     app.launch(
         server_name="0.0.0.0",

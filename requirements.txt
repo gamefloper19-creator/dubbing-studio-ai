@@ -19,6 +19,9 @@ edge-tts>=6.1.0
 # Hardware Detection
 psutil>=5.9.0
 
+# Build Tools (for creating standalone executable)
+pyinstaller>=6.0.0
+
 # Optional: Native TTS engines (install separately if needed)
 # pip install chatterbox-tts
 # pip install TTS
