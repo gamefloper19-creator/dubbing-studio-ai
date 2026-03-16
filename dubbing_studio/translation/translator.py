@@ -2,9 +2,12 @@
 Smart translation engine using Google Gemini or compatible providers.
 """
 
+import hashlib
+import json
 import logging
 import time
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Optional
 
 from dubbing_studio.config import TranslationConfig, SUPPORTED_LANGUAGES
@@ -36,6 +39,37 @@ class Translator:
     def __init__(self, config: Optional[TranslationConfig] = None):
         self.config = config or TranslationConfig()
         self._client = None
+        self._cache: dict[str, str] = {}
+        self._cache_dir = Path("cache/translations")
+        self._cache_dir.mkdir(parents=True, exist_ok=True)
+        self._load_cache()
+
+    def _cache_key(self, text: str, target_language: str, source_language: str = "") -> str:
+        """Generate a deterministic cache key for a translation request."""
+        raw = f"{source_language}|{target_language}|{text}"
+        return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+    def _load_cache(self) -> None:
+        """Load the translation cache from disk."""
+        cache_file = self._cache_dir / "cache.json"
+        if cache_file.exists():
+            try:
+                self._cache = json.loads(cache_file.read_text(encoding="utf-8"))
+                logger.debug("Loaded %d cached translations", len(self._cache))
+            except (json.JSONDecodeError, OSError) as e:
+                logger.warning("Failed to load translation cache: %s", e)
+                self._cache = {}
+
+    def _save_cache(self) -> None:
+        """Persist the translation cache to disk."""
+        cache_file = self._cache_dir / "cache.json"
+        try:
+            cache_file.write_text(
+                json.dumps(self._cache, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+        except OSError as e:
+            logger.warning("Failed to save translation cache: %s", e)
 
     def _init_client(self) -> None:
         """Initialize the translation API client."""
@@ -99,6 +133,12 @@ class Translator:
             text, target_lang_name, source_lang_name, context
         )
 
+        # Check cache first
+        key = self._cache_key(text, target_language, source_language)
+        if key in self._cache:
+            logger.debug("Translation cache hit for: '%s'", text[:50])
+            return self._cache[key]
+
         for attempt in range(self.config.max_retries):
             try:
                 response = self._client.generate_content(prompt)
@@ -106,6 +146,10 @@ class Translator:
 
                 # Clean up any quotation marks or metadata the model may add
                 translated = self._clean_translation(translated)
+
+                # Store in cache
+                self._cache[key] = translated
+                self._save_cache()
 
                 logger.debug(
                     "Translated: '%s' -> '%s'",
