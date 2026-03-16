@@ -35,12 +35,30 @@ setup(
         "luxtts": [
             "TTS>=0.22.0",
         ],
+        "cloning": [
+            "resemblyzer",
+            "TTS>=0.22.0",
+        ],
+        "diarization": [
+            "pyannote.audio",
+        ],
+        "youtube": [
+            "yt-dlp",
+            "google-api-python-client",
+            "google-auth-oauthlib",
+        ],
+        "build": [
+            "pyinstaller",
+        ],
         "all": [
             "torch>=2.0.0",
             "torchaudio>=2.0.0",
             "transformers>=4.35.0",
             "chatterbox-tts",
             "TTS>=0.22.0",
+            "resemblyzer",
+            "yt-dlp",
+            "pyinstaller",
         ],
     },
     entry_points={

@@ -29,11 +29,14 @@ from dubbing_studio.audio.extractor import AudioExtractor
 from dubbing_studio.audio.mixer import AudioMixer
 from dubbing_studio.audio.segmenter import AudioSegment, AudioSegmenter
 from dubbing_studio.config import AppConfig
+from dubbing_studio.emotion.analyzer import EmotionAnalyzer, EmotionProfile
 from dubbing_studio.export.exporter import Exporter
+from dubbing_studio.narration.engine import CinematicNarrationEngine
 from dubbing_studio.speech.analyzer import NarrationAnalyzer, NarrationStyle
 from dubbing_studio.speech.recognizer import SpeechRecognizer, TranscriptionSegment
 from dubbing_studio.subtitle.generator import SubtitleGenerator
 from dubbing_studio.timing.aligner import TimingAligner
+from dubbing_studio.timing.advanced_aligner import AdvancedTimingAligner
 from dubbing_studio.translation.translator import TranslatedSegment, Translator
 from dubbing_studio.tts.voice_selector import VoiceSelector
 from dubbing_studio.video.renderer import VideoRenderer
@@ -47,7 +50,9 @@ PIPELINE_STAGES = [
     "Segmentation",
     "Speech Recognition",
     "Narration Analysis",
+    "Emotion Analysis",
     "Translation",
+    "Cinematic Optimization",
     "Voice Selection",
     "Speech Generation",
     "Timing Alignment",
@@ -70,6 +75,8 @@ class DubbingResult:
     total_duration: float = 0.0
     processing_time: float = 0.0
     narration_style: Optional[NarrationStyle] = None
+    emotion_profiles: list = field(default_factory=list)
+    cinematic_optimized: bool = False
 
 
 class DubbingPipeline:
@@ -83,7 +90,7 @@ class DubbingPipeline:
         self.config = config or AppConfig.from_env()
         self.config.setup_dirs()
 
-        # Initialize components
+        # Initialize core components (existing pipeline)
         self.extractor = AudioExtractor(self.config.audio)
         self.cleaner = AudioCleaner(self.config.audio)
         self.segmenter = AudioSegmenter(self.config.audio)
@@ -96,6 +103,11 @@ class DubbingPipeline:
         self.subtitle_gen = SubtitleGenerator(self.config.subtitle)
         self.renderer = VideoRenderer(self.config.export, self.config.subtitle)
         self.exporter = Exporter(self.config.export)
+
+        # Initialize advanced components (new capabilities)
+        self.emotion_analyzer = EmotionAnalyzer(self.config.emotion)
+        self.cinematic_engine = CinematicNarrationEngine(self.config.cinematic)
+        self.advanced_aligner = AdvancedTimingAligner(self.config.timing)
 
     def process_video(
         self,
@@ -178,33 +190,74 @@ class DubbingPipeline:
             )
             report_progress("Narration Analysis", 5.0 / len(PIPELINE_STAGES))
 
-            # ── Stage 6: Translation ──
-            report_progress("Translation", 5.0 / len(PIPELINE_STAGES))
+            # ── Stage 6: Emotion Analysis (NEW) ──
+            report_progress("Emotion Analysis", 5.0 / len(PIPELINE_STAGES))
+            emotion_profiles: list[EmotionProfile] = []
+            if self.config.emotion.enabled:
+                emotion_segments = [
+                    {"text": seg.text, "audio_path": seg.audio_path}
+                    for seg in transcription_segments
+                ]
+                emotion_profiles = self.emotion_analyzer.analyze_segments(
+                    emotion_segments
+                )
+                logger.info(
+                    "Emotion analysis: %d profiles generated",
+                    len(emotion_profiles),
+                )
+            report_progress("Emotion Analysis", 6.0 / len(PIPELINE_STAGES))
+
+            # ── Stage 7: Translation ──
+            report_progress("Translation", 6.0 / len(PIPELINE_STAGES))
             translated_segments = self.translator.translate_segments(
                 transcription_segments, target_language
             )
-            report_progress("Translation", 6.0 / len(PIPELINE_STAGES))
+            report_progress("Translation", 7.0 / len(PIPELINE_STAGES))
 
-            # ── Stage 7: Voice Selection ──
-            report_progress("Voice Selection", 6.0 / len(PIPELINE_STAGES))
+            # ── Stage 8: Cinematic Narration Optimization (NEW) ──
+            report_progress("Cinematic Optimization", 7.0 / len(PIPELINE_STAGES))
+            cinematic_optimized = False
+            if self.config.cinematic.enabled:
+                translated_segments = self.cinematic_engine.optimize_narration(
+                    translated_segments
+                )
+                cinematic_optimized = True
+                logger.info(
+                    "Cinematic optimization applied: %d segments",
+                    len(translated_segments),
+                )
+            report_progress("Cinematic Optimization", 8.0 / len(PIPELINE_STAGES))
+
+            # ── Stage 9: Voice Selection ──
+            report_progress("Voice Selection", 8.0 / len(PIPELINE_STAGES))
             tts_engine, voice_config = self.voice_selector.select_voice(
                 target_language, narration_style_info
             )
-            report_progress("Voice Selection", 7.0 / len(PIPELINE_STAGES))
+            report_progress("Voice Selection", 9.0 / len(PIPELINE_STAGES))
 
-            # ── Stage 8: Speech Generation ──
-            report_progress("Speech Generation", 7.0 / len(PIPELINE_STAGES))
+            # ── Stage 10: Speech Generation ──
+            report_progress("Speech Generation", 9.0 / len(PIPELINE_STAGES))
             tts_dir = str(work_dir / "tts")
             Path(tts_dir).mkdir(parents=True, exist_ok=True)
 
             tts_audio_paths = []
             for i, seg in enumerate(translated_segments):
                 tts_path = str(Path(tts_dir) / f"tts_{seg.segment_id}.wav")
+
+                # Apply emotion-aware speed/pitch if available
+                tts_speed = voice_config.get("speed", 1.0)
+                if emotion_profiles and i < len(emotion_profiles):
+                    ep = emotion_profiles[i]
+                    tts_params = self.emotion_analyzer.get_tts_parameters(
+                        ep, base_speed=tts_speed
+                    )
+                    tts_speed = tts_params["speed"]
+
                 tts_result = tts_engine.generate_speech(
                     text=seg.translated_text,
                     output_path=tts_path,
                     language=target_language,
-                    speed=voice_config.get("speed", 1.0),
+                    speed=tts_speed,
                 )
                 tts_audio_paths.append({
                     "audio_path": tts_result.audio_path,
@@ -212,15 +265,21 @@ class DubbingPipeline:
                     "duration": tts_result.duration,
                 })
 
-                sub_progress = 7.0 + (i + 1) / len(translated_segments)
+                sub_progress = 9.0 + (i + 1) / len(translated_segments)
                 report_progress("Speech Generation", sub_progress / len(PIPELINE_STAGES))
 
-            report_progress("Speech Generation", 8.0 / len(PIPELINE_STAGES))
+            report_progress("Speech Generation", 10.0 / len(PIPELINE_STAGES))
 
-            # ── Stage 9: Timing Alignment ──
-            report_progress("Timing Alignment", 8.0 / len(PIPELINE_STAGES))
+            # ── Stage 11: Timing Alignment (with advanced enhancements) ──
+            report_progress("Timing Alignment", 10.0 / len(PIPELINE_STAGES))
             aligned_dir = str(work_dir / "aligned")
             Path(aligned_dir).mkdir(parents=True, exist_ok=True)
+
+            # Detect scene boundaries for advanced timing
+            try:
+                self.advanced_aligner.detect_scene_boundaries(video_path)
+            except Exception as e:
+                logger.debug("Scene boundary detection skipped: %s", e)
 
             aligned_paths = []
             for item in tts_audio_paths:
@@ -228,11 +287,29 @@ class DubbingPipeline:
                 target_dur = seg.end_time - seg.start_time
                 aligned_path = str(Path(aligned_dir) / f"aligned_{seg.segment_id}.wav")
 
-                self.aligner.align_timing(
-                    audio_path=item["audio_path"],
-                    target_duration=target_dur,
-                    output_path=aligned_path,
-                )
+                # Use advanced aligner with scene awareness
+                try:
+                    adv_result = self.advanced_aligner.align_with_scene_awareness(
+                        audio_path=item["audio_path"],
+                        target_duration=target_dur,
+                        output_path=aligned_path,
+                        segment_start=seg.start_time,
+                        segment_end=seg.end_time,
+                    )
+                    logger.debug(
+                        "Advanced alignment: deviation=%.0fms, scene=%s, micro=%d",
+                        adv_result.adjustment.deviation_ms,
+                        adv_result.scene_aligned,
+                        adv_result.micro_corrections,
+                    )
+                except Exception as e:
+                    # Fallback to standard aligner
+                    logger.debug("Advanced aligner fallback: %s", e)
+                    self.aligner.align_timing(
+                        audio_path=item["audio_path"],
+                        target_duration=target_dur,
+                        output_path=aligned_path,
+                    )
 
                 aligned_paths.append({
                     "audio_path": aligned_path,
@@ -240,10 +317,10 @@ class DubbingPipeline:
                     "end_time": seg.end_time,
                 })
 
-            report_progress("Timing Alignment", 9.0 / len(PIPELINE_STAGES))
+            report_progress("Timing Alignment", 11.0 / len(PIPELINE_STAGES))
 
-            # ── Stage 10: Build Full Narration Track ──
-            report_progress("Background Mixing", 9.0 / len(PIPELINE_STAGES))
+            # ── Stage 12: Build Full Narration Track ──
+            report_progress("Background Mixing", 11.0 / len(PIPELINE_STAGES))
 
             # Build full narration audio with proper timing
             narration_audio = str(work_dir / "narration.wav")
@@ -263,20 +340,20 @@ class DubbingPipeline:
             else:
                 mixed_audio = narration_audio
 
-            report_progress("Background Mixing", 10.0 / len(PIPELINE_STAGES))
+            report_progress("Background Mixing", 12.0 / len(PIPELINE_STAGES))
 
-            # ── Stage 11: Subtitle Generation ──
-            report_progress("Subtitle Generation", 10.0 / len(PIPELINE_STAGES))
+            # ── Stage 13: Subtitle Generation ──
+            report_progress("Subtitle Generation", 12.0 / len(PIPELINE_STAGES))
             subtitles_dir = str(out_dir / f"{video_name}_subtitles")
             subtitle_paths = self.subtitle_gen.generate_all_formats(
                 translated_segments,
                 subtitles_dir,
                 f"{video_name}_{target_language}",
             )
-            report_progress("Subtitle Generation", 11.0 / len(PIPELINE_STAGES))
+            report_progress("Subtitle Generation", 13.0 / len(PIPELINE_STAGES))
 
-            # ── Stage 12: Video Rendering ──
-            report_progress("Video Rendering", 11.0 / len(PIPELINE_STAGES))
+            # ── Stage 14: Video Rendering ──
+            report_progress("Video Rendering", 13.0 / len(PIPELINE_STAGES))
 
             output_video = str(out_dir / f"{video_name}_{target_language}_dubbed.mp4")
             subtitle_for_embed = subtitle_paths.get(
@@ -320,6 +397,8 @@ class DubbingPipeline:
                 total_duration=total_duration,
                 processing_time=processing_time,
                 narration_style=narration_style_info,
+                emotion_profiles=emotion_profiles,
+                cinematic_optimized=cinematic_optimized,
             )
 
             logger.info(

@@ -19,7 +19,24 @@ edge-tts>=6.1.0
 # Hardware Detection
 psutil>=5.9.0
 
+# YouTube Download
+# yt-dlp must be installed separately: pip install yt-dlp
+
+# Packaging
+# PyInstaller for building standalone executable
+# pip install pyinstaller
+
 # Optional: Native TTS engines (install separately if needed)
 # pip install chatterbox-tts
 # pip install TTS
 # pip install transformers torch
+
+# Optional: Voice cloning
+# pip install resemblyzer
+# pip install TTS  (for XTTS-v2)
+
+# Optional: Speaker diarization
+# pip install pyannote.audio
+
+# Optional: YouTube upload
+# pip install google-api-python-client google-auth-oauthlib

@@ -169,6 +169,74 @@ class BatchConfig:
 
 
 @dataclass
+class EmotionConfig:
+    """Emotion-aware narration configuration."""
+    enabled: bool = True
+    emotions: list = field(default_factory=lambda: [
+        "neutral", "dramatic", "suspense", "inspirational", "calm",
+    ])
+    pitch_range: float = 0.3  # max pitch deviation factor
+    speed_range: float = 0.2  # max speed deviation factor
+    pause_multiplier_range: float = 0.5  # max pause length multiplier deviation
+    use_nlp: bool = True
+    use_prosody: bool = True
+
+
+@dataclass
+class VoiceCloningConfig:
+    """Voice cloning configuration."""
+    enabled: bool = True
+    min_sample_duration: float = 10.0  # seconds
+    max_sample_duration: float = 60.0  # seconds
+    profiles_dir: str = "voice_profiles"
+    embedding_model: str = "resemblyzer"  # resemblyzer or speechbrain
+    quality: str = "high"  # low, medium, high
+
+
+@dataclass
+class DiarizationConfig:
+    """Multi-speaker diarization configuration."""
+    enabled: bool = True
+    min_speakers: int = 1
+    max_speakers: int = 10
+    min_segment_duration: float = 1.0  # seconds
+    assign_unique_voices: bool = True
+
+
+@dataclass
+class CinematicNarrationConfig:
+    """Cinematic narration engine configuration."""
+    enabled: bool = True
+    merge_short_segments: bool = True
+    min_paragraph_duration: float = 3.0  # seconds
+    smooth_transitions: bool = True
+    transition_pause: float = 0.3  # seconds between merged sentences
+    optimize_pacing: bool = True
+    target_wpm: float = 145.0  # ideal documentary narration WPM
+
+
+@dataclass
+class YouTubeConfig:
+    """YouTube dubbing pipeline configuration."""
+    enabled: bool = True
+    download_quality: str = "best"  # best, 1080p, 720p, 480p
+    upload_enabled: bool = False
+    api_key: str = ""
+    client_secrets_file: str = ""
+    translate_metadata: bool = True
+    upload_subtitles: bool = True
+
+
+@dataclass
+class ModelManagementConfig:
+    """Model management configuration."""
+    auto_download: bool = True
+    models_dir: str = "models"
+    check_updates: bool = False
+    show_progress: bool = True
+
+
+@dataclass
 class AppConfig:
     """Main application configuration."""
     audio: AudioConfig = field(default_factory=AudioConfig)
@@ -180,6 +248,12 @@ class AppConfig:
     subtitle: SubtitleConfig = field(default_factory=SubtitleConfig)
     export: ExportConfig = field(default_factory=ExportConfig)
     batch: BatchConfig = field(default_factory=BatchConfig)
+    emotion: EmotionConfig = field(default_factory=EmotionConfig)
+    cloning: VoiceCloningConfig = field(default_factory=VoiceCloningConfig)
+    diarization: DiarizationConfig = field(default_factory=DiarizationConfig)
+    cinematic: CinematicNarrationConfig = field(default_factory=CinematicNarrationConfig)
+    youtube: YouTubeConfig = field(default_factory=YouTubeConfig)
+    model_management: ModelManagementConfig = field(default_factory=ModelManagementConfig)
 
     # Directories
     output_dir: str = "output"
@@ -188,7 +262,10 @@ class AppConfig:
 
     def setup_dirs(self) -> None:
         """Create necessary directories."""
-        for d in [self.output_dir, self.temp_dir, self.cache_dir]:
+        for d in [
+            self.output_dir, self.temp_dir, self.cache_dir,
+            self.cloning.profiles_dir, self.model_management.models_dir,
+        ]:
             Path(d).mkdir(parents=True, exist_ok=True)
 
     @classmethod
@@ -198,6 +275,7 @@ class AppConfig:
         config.translation.api_key = os.environ.get("GEMINI_API_KEY", "")
         config.output_dir = os.environ.get("DUBBING_OUTPUT_DIR", "output")
         config.temp_dir = os.environ.get("DUBBING_TEMP_DIR", "temp")
+        config.youtube.api_key = os.environ.get("YOUTUBE_API_KEY", "")
 
         whisper_model = os.environ.get("WHISPER_MODEL", "base")
         if whisper_model in ("tiny", "base", "medium", "large-v3"):
