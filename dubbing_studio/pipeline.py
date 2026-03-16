@@ -386,11 +386,12 @@ class DubbingPipeline:
             mix_parts.append(f"[s{i}]")
 
         # Mix all tracks
+        # normalize=0 prevents amix from dividing volume by input count
         n_inputs = len(aligned_paths) + 1
         filter_parts.append(
             "".join(mix_parts)
             + f"amix=inputs={n_inputs}:duration=longest"
-            + f":dropout_transition=0[out]"
+            + f":dropout_transition=0:normalize=0[out]"
         )
 
         filter_complex = ";".join(filter_parts)

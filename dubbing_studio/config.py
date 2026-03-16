@@ -84,6 +84,16 @@ VOICE_LANGUAGE_MAP: dict[str, dict] = {
     "hu": {"gender": "male", "style": "documentary", "engine": "qwen3"},
     "th": {"gender": "male", "style": "calm", "engine": "qwen3"},
     "vi": {"gender": "male", "style": "documentary", "engine": "qwen3"},
+    "bn": {"gender": "male", "style": "documentary", "engine": "qwen3"},
+    "ta": {"gender": "male", "style": "documentary", "engine": "qwen3"},
+    "te": {"gender": "male", "style": "documentary", "engine": "qwen3"},
+    "kn": {"gender": "male", "style": "documentary", "engine": "qwen3"},
+    "mr": {"gender": "male", "style": "documentary", "engine": "qwen3"},
+    "gu": {"gender": "male", "style": "documentary", "engine": "qwen3"},
+    "ur": {"gender": "male", "style": "documentary", "engine": "qwen3"},
+    "id": {"gender": "male", "style": "documentary", "engine": "qwen3"},
+    "uk": {"gender": "male", "style": "documentary", "engine": "qwen3"},
+    "he": {"gender": "male", "style": "documentary", "engine": "qwen3"},
 }
 
 SUPPORTED_LANGUAGES: dict[str, str] = {
@@ -111,6 +121,16 @@ SUPPORTED_LANGUAGES: dict[str, str] = {
     "hu": "Hungarian",
     "th": "Thai",
     "vi": "Vietnamese",
+    "bn": "Bengali",
+    "ta": "Tamil",
+    "te": "Telugu",
+    "kn": "Kannada",
+    "mr": "Marathi",
+    "gu": "Gujarati",
+    "ur": "Urdu",
+    "id": "Indonesian",
+    "uk": "Ukrainian",
+    "he": "Hebrew",
 }
 
 
@@ -195,12 +215,30 @@ class AppConfig:
     def from_env(cls) -> "AppConfig":
         """Create configuration from environment variables."""
         config = cls()
+
+        # Translation
         config.translation.api_key = os.environ.get("GEMINI_API_KEY", "")
+        config.translation.model = os.environ.get(
+            "GEMINI_MODEL", config.translation.model
+        )
+
+        # Directories
         config.output_dir = os.environ.get("DUBBING_OUTPUT_DIR", "output")
         config.temp_dir = os.environ.get("DUBBING_TEMP_DIR", "temp")
+        config.cache_dir = os.environ.get("DUBBING_CACHE_DIR", "cache")
 
+        # Whisper
         whisper_model = os.environ.get("WHISPER_MODEL", "base")
-        if whisper_model in ("tiny", "base", "medium", "large-v3"):
+        if whisper_model in ("tiny", "base", "small", "medium", "large-v3"):
             config.whisper.model_size = whisper_model
+
+        # Voice
+        tts_engine = os.environ.get("TTS_ENGINE", "auto")
+        if tts_engine in ("auto", "qwen3", "chatterbox", "luxtts"):
+            config.voice.engine = tts_engine
+
+        narrator_gender = os.environ.get("NARRATOR_GENDER", "auto")
+        if narrator_gender in ("auto", "male", "female"):
+            config.voice.narrator_gender = narrator_gender
 
         return config
