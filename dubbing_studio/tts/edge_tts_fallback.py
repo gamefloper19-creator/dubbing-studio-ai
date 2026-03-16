@@ -10,6 +10,7 @@ import asyncio
 import json
 import logging
 import subprocess
+import time
 from pathlib import Path
 from typing import Optional
 
@@ -134,12 +135,31 @@ def generate_edge_tts(
 
     logger.info("Edge TTS: voice=%s, language=%s, speed=%s", voice, language, rate_str)
 
-    try:
-        _run_async(_generate())
-    except Exception as e:
-        raise RuntimeError(f"Edge TTS generation failed: {e}") from e
+    max_retries = 3
+    last_error: Exception | None = None
 
-    return output_path
+    for attempt in range(max_retries):
+        try:
+            _run_async(_generate())
+            return output_path
+        except Exception as e:
+            last_error = e
+            if attempt < max_retries - 1:
+                wait_time = 2 ** attempt
+                logger.warning(
+                    "Edge TTS attempt %d/%d failed: %s. Retrying in %ds...",
+                    attempt + 1, max_retries, e, wait_time,
+                )
+                time.sleep(wait_time)
+            else:
+                logger.error(
+                    "Edge TTS failed after %d attempts: %s",
+                    max_retries, e,
+                )
+
+    raise RuntimeError(
+        f"Edge TTS generation failed after {max_retries} attempts: {last_error}"
+    ) from last_error
 
 
 def get_audio_duration(path: str) -> float:
