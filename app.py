@@ -513,20 +513,6 @@ def create_ui() -> gr.Blocks:
 
     with gr.Blocks(
         title=f"{__app_name__} v{__version__}",
-        theme=gr.themes.Soft(
-            primary_hue="blue",
-            secondary_hue="slate",
-        ),
-        css="""
-        .main-header {
-            text-align: center;
-            margin-bottom: 20px;
-        }
-        .stage-info {
-            font-family: monospace;
-            font-size: 13px;
-        }
-        """,
     ) as app:
 
         gr.Markdown(
@@ -1006,6 +992,20 @@ def main():
         server_port=7860,
         share=False,
         show_error=True,
+        theme=gr.themes.Soft(
+            primary_hue="blue",
+            secondary_hue="slate",
+        ),
+        css="""
+        .main-header {
+            text-align: center;
+            margin-bottom: 20px;
+        }
+        .stage-info {
+            font-family: monospace;
+            font-size: 13px;
+        }
+        """,
     )
 
 
