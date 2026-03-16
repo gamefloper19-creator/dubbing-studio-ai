@@ -3,6 +3,15 @@ Speech timing alignment engine.
 
 Ensures generated speech matches original segment duration
 within 300ms tolerance.
+
+Alignment strategy (multi-pass):
+1. Check if already within tolerance -> no change needed
+2. Trim trailing silence -> re-check tolerance
+3. Apply speed adjustment (atempo) within safe range -> re-check
+4. Add padding silence for short segments
+5. Combine speed + padding for extreme mismatches
+
+Logs detailed per-segment timing statistics.
 """
 
 import json
@@ -51,7 +60,14 @@ class TimingAligner:
         output_path: str,
     ) -> TimingAdjustment:
         """
-        Align audio duration to target duration.
+        Align audio duration to target duration within 300ms tolerance.
+
+        Uses a multi-pass strategy:
+        1. If within tolerance, copy as-is
+        2. Trim silence, then re-check
+        3. Speed adjustment within safe range
+        4. Padding for short segments
+        5. Combined speed + pad for extreme cases
 
         Args:
             audio_path: Path to generated TTS audio.
@@ -64,16 +80,45 @@ class TimingAligner:
         Path(output_path).parent.mkdir(parents=True, exist_ok=True)
 
         current_duration = self._get_duration(audio_path)
+
+        if current_duration <= 0:
+            logger.warning("Audio file has zero duration: %s", audio_path)
+            self._copy_audio(audio_path, output_path)
+            return TimingAdjustment(
+                original_duration=0.0,
+                generated_duration=0.0,
+                adjusted_duration=0.0,
+                deviation_ms=target_duration * 1000,
+                speed_factor=1.0,
+                method="error",
+            )
+
+        if target_duration <= 0:
+            logger.warning("Target duration is zero or negative: %.2f", target_duration)
+            self._copy_audio(audio_path, output_path)
+            return TimingAdjustment(
+                original_duration=current_duration,
+                generated_duration=current_duration,
+                adjusted_duration=current_duration,
+                deviation_ms=current_duration * 1000,
+                speed_factor=1.0,
+                method="error",
+            )
+
         deviation_ms = abs(current_duration - target_duration) * 1000
 
         logger.info(
-            "Timing alignment: current=%.2fs, target=%.2fs, deviation=%.0fms",
+            "Timing alignment: current=%.3fs, target=%.3fs, deviation=%.0fms",
             current_duration, target_duration, deviation_ms,
         )
 
-        # If already within tolerance, just copy
+        # Pass 1: If already within tolerance, just copy
         if deviation_ms <= self.config.max_deviation_ms:
             self._copy_audio(audio_path, output_path)
+            logger.info(
+                "Timing OK (within %.0fms tolerance): deviation=%.0fms",
+                self.config.max_deviation_ms, deviation_ms,
+            )
             return TimingAdjustment(
                 original_duration=current_duration,
                 generated_duration=current_duration,
@@ -83,17 +128,23 @@ class TimingAligner:
                 method="none",
             )
 
-        # Try methods in order of preference
+        # Pass 2+: Apply correction
         if current_duration > target_duration:
-            # Speech is too long - need to speed up or trim
-            return self._shorten_audio(
+            result = self._shorten_audio(
                 audio_path, current_duration, target_duration, output_path
             )
         else:
-            # Speech is too short - need to slow down or add pauses
-            return self._lengthen_audio(
+            result = self._lengthen_audio(
                 audio_path, current_duration, target_duration, output_path
             )
+
+        logger.info(
+            "Timing aligned: %.3fs -> %.3fs (target=%.3fs, deviation=%.0fms, method=%s, speed=%.2fx)",
+            current_duration, result.adjusted_duration, target_duration,
+            result.deviation_ms, result.method, result.speed_factor,
+        )
+
+        return result
 
     def _shorten_audio(
         self,
