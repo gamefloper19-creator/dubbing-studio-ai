@@ -1,125 +1,147 @@
 """
-PyInstaller Build Script for Dubbing Studio.
+Build script for Dubbing Studio.
 
-Creates a standalone Windows executable (DubbingStudio.exe).
+Creates the DubbingStudio executable using PyInstaller.
 
 Usage:
-    python build.py          # Build the executable
-    python build.py --clean  # Clean build artifacts first
+    python build.py
+
+Requirements:
+    - PyInstaller >= 6.0
+    - All project dependencies installed
+    - FFmpeg must be available on the target system
+
+Output:
+    dist/DubbingStudio/DubbingStudio.exe (Windows)
+    dist/DubbingStudio/DubbingStudio     (Linux/macOS)
 """
 
 import os
+import platform
 import shutil
 import subprocess
 import sys
-from pathlib import Path
 
 
-APP_NAME = "DubbingStudio"
-MAIN_SCRIPT = "main.py"
-ICON_PATH = None  # Set to .ico path if available
+def check_prerequisites():
+    """Check that all build prerequisites are met."""
+    print("Checking prerequisites...")
+
+    # Check PyInstaller
+    try:
+        import PyInstaller
+        print(f"  PyInstaller: {PyInstaller.__version__}")
+    except ImportError:
+        print("  PyInstaller: NOT FOUND - install with: pip install pyinstaller")
+        return False
+
+    # Check FFmpeg
+    try:
+        result = subprocess.run(
+            ["ffmpeg", "-version"],
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode == 0:
+            version_line = result.stdout.split("\n")[0]
+            print(f"  FFmpeg: {version_line}")
+        else:
+            print("  FFmpeg: NOT FOUND (required for audio/video processing)")
+            return False
+    except FileNotFoundError:
+        print("  FFmpeg: NOT FOUND (required for audio/video processing)")
+        return False
+
+    # Check core dependencies
+    deps = {
+        "gradio": "gradio",
+        "whisper": "openai-whisper",
+        "google.generativeai": "google-generativeai",
+        "edge_tts": "edge-tts",
+        "psutil": "psutil",
+    }
+
+    for module, package in deps.items():
+        try:
+            __import__(module)
+            print(f"  {package}: OK")
+        except ImportError:
+            print(f"  {package}: NOT FOUND - install with: pip install {package}")
+            return False
+
+    print("All prerequisites met.")
+    return True
 
 
 def clean_build():
-    """Remove previous build artifacts."""
-    dirs_to_clean = ["build", "dist", f"{APP_NAME}.spec"]
-    for d in dirs_to_clean:
-        path = Path(d)
-        if path.is_dir():
+    """Clean previous build artifacts."""
+    print("Cleaning previous build artifacts...")
+    for path in ["build", "dist"]:
+        if os.path.exists(path):
             shutil.rmtree(path)
-            print(f"Cleaned: {d}")
-        elif path.is_file():
-            path.unlink()
-            print(f"Cleaned: {d}")
+            print(f"  Removed {path}/")
 
 
 def build_executable():
-    """Build the standalone executable using PyInstaller."""
-    print(f"Building {APP_NAME}...")
-    print("=" * 50)
+    """Build the executable using PyInstaller."""
+    print("Building DubbingStudio executable...")
+    print(f"  Platform: {platform.system()} {platform.machine()}")
 
-    # Ensure PyInstaller is available
-    try:
-        import PyInstaller
-        print(f"PyInstaller version: {PyInstaller.__version__}")
-    except ImportError:
-        print("PyInstaller not found. Installing...")
-        subprocess.check_call([sys.executable, "-m", "pip", "install", "pyinstaller"])
+    spec_file = os.path.join(os.path.dirname(__file__), "DubbingStudio.spec")
 
-    # Build command
+    if not os.path.exists(spec_file):
+        print(f"ERROR: Spec file not found: {spec_file}")
+        return False
+
     cmd = [
         sys.executable, "-m", "PyInstaller",
-        "--name", APP_NAME,
-        "--onedir",  # Create a directory with all dependencies
-        "--windowed",  # No console window (GUI app)
         "--noconfirm",
-
-        # Include all dubbing_studio packages
-        "--collect-all", "dubbing_studio",
-
-        # Include data files
-        "--add-data", f"dubbing_studio{os.pathsep}dubbing_studio",
-
-        # Hidden imports for dynamic loading
-        "--hidden-import", "gradio",
-        "--hidden-import", "edge_tts",
-        "--hidden-import", "whisper",
-        "--hidden-import", "google.generativeai",
-        "--hidden-import", "psutil",
-        "--hidden-import", "dubbing_studio.emotion.analyzer",
-        "--hidden-import", "dubbing_studio.cloning.voice_cloner",
-        "--hidden-import", "dubbing_studio.diarization.speaker_detector",
-        "--hidden-import", "dubbing_studio.narration.engine",
-        "--hidden-import", "dubbing_studio.timing.advanced_aligner",
-        "--hidden-import", "dubbing_studio.youtube.pipeline",
-        "--hidden-import", "dubbing_studio.models.manager",
-        "--hidden-import", "dubbing_studio.tts.voice_library",
-
-        # Exclude unnecessary modules to reduce size
-        "--exclude-module", "matplotlib",
-        "--exclude-module", "tkinter",
-        "--exclude-module", "unittest",
-        "--exclude-module", "test",
+        spec_file,
     ]
 
-    # Add icon if available
-    if ICON_PATH and Path(ICON_PATH).exists():
-        cmd.extend(["--icon", ICON_PATH])
+    print(f"  Running: {' '.join(cmd)}")
+    result = subprocess.run(cmd, cwd=os.path.dirname(__file__))
 
-    # Main script
-    cmd.append(MAIN_SCRIPT)
+    if result.returncode != 0:
+        print("ERROR: PyInstaller build failed!")
+        return False
 
-    print(f"Command: {' '.join(cmd)}")
-    print("=" * 50)
+    # Check output
+    exe_name = "DubbingStudio.exe" if platform.system() == "Windows" else "DubbingStudio"
+    exe_path = os.path.join("dist", "DubbingStudio", exe_name)
 
-    result = subprocess.run(cmd)
-
-    if result.returncode == 0:
-        dist_path = Path("dist") / APP_NAME
-        print("\n" + "=" * 50)
-        print(f"Build successful!")
-        print(f"Output: {dist_path.resolve()}")
-        print(f"Executable: {dist_path / f'{APP_NAME}.exe'}")
-
-        # Calculate total size
-        total_size = sum(
-            f.stat().st_size for f in dist_path.rglob("*") if f.is_file()
-        ) if dist_path.exists() else 0
-        print(f"Total size: {total_size / (1024 * 1024):.1f} MB")
-        print("=" * 50)
+    if os.path.exists(exe_path):
+        size_mb = os.path.getsize(exe_path) / (1024 * 1024)
+        print(f"  Build successful: {exe_path} ({size_mb:.1f} MB)")
+        return True
     else:
-        print("\nBuild failed!")
-        sys.exit(1)
+        print(f"ERROR: Expected output not found: {exe_path}")
+        return False
 
 
 def main():
-    if "--clean" in sys.argv:
-        clean_build()
+    """Main build entry point."""
+    print("=" * 50)
+    print("Dubbing Studio - Build Script")
+    print("=" * 50)
 
-    if "--clean-only" in sys.argv:
-        return
+    if not check_prerequisites():
+        print("\nBuild aborted: prerequisites not met.")
+        sys.exit(1)
 
-    build_executable()
+    clean_build()
+
+    if build_executable():
+        print("\n" + "=" * 50)
+        print("BUILD SUCCESSFUL")
+        print("=" * 50)
+        exe_name = "DubbingStudio.exe" if platform.system() == "Windows" else "DubbingStudio"
+        print(f"Executable: dist/DubbingStudio/{exe_name}")
+        print("\nNote: FFmpeg must be installed on the target system.")
+        print("      Download from: https://ffmpeg.org/download.html")
+    else:
+        print("\nBUILD FAILED")
+        sys.exit(1)
 
 
 if __name__ == "__main__":

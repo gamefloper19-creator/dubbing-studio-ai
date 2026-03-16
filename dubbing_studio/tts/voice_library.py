@@ -1,264 +1,309 @@
 """
-Expanded Voice Library.
+Voice Library - Catalog of all available voices across TTS engines.
 
-Provides a comprehensive collection of voices organized by
-language, style (cinematic/documentary/neutral), and gender.
+Provides a unified interface to browse, filter, and select voices
+from all supported TTS engines.
 """
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional
+
+from dubbing_studio.config import SUPPORTED_LANGUAGES, VOICE_LANGUAGE_MAP
 
 logger = logging.getLogger(__name__)
 
 
 @dataclass
 class VoiceEntry:
-    """A voice entry in the library."""
+    """A single voice in the library."""
     voice_id: str
     name: str
-    engine: str  # qwen3, chatterbox, luxtts, edge-tts
-    language: str
+    engine: str
     gender: str  # male, female
-    style: str  # cinematic, documentary, neutral, storytelling
-    edge_voice: str = ""  # edge-tts voice name for fallback
+    language_codes: list[str] = field(default_factory=list)
+    style: str = "documentary"  # documentary, cinematic, calm, storytelling
+    quality: str = "standard"  # standard, premium
+    description: str = ""
 
 
-# Comprehensive voice library organized by language, style, and gender
-VOICE_LIBRARY: list[VoiceEntry] = [
-    # ── English ──
-    VoiceEntry("en_male_documentary", "David (Documentary)", "chatterbox", "en", "male", "documentary", "en-US-GuyNeural"),
-    VoiceEntry("en_female_documentary", "Sarah (Documentary)", "chatterbox", "en", "female", "documentary", "en-US-JennyNeural"),
-    VoiceEntry("en_male_cinematic", "James (Cinematic)", "chatterbox", "en", "male", "cinematic", "en-US-ChristopherNeural"),
-    VoiceEntry("en_female_cinematic", "Emily (Cinematic)", "chatterbox", "en", "female", "cinematic", "en-US-AriaNeural"),
-    VoiceEntry("en_male_neutral", "Mark (Neutral)", "qwen3", "en", "male", "neutral", "en-US-DavisNeural"),
-    VoiceEntry("en_female_neutral", "Lisa (Neutral)", "qwen3", "en", "female", "neutral", "en-US-AmberNeural"),
-    VoiceEntry("en_male_storytelling", "Robert (Storytelling)", "chatterbox", "en", "male", "storytelling", "en-GB-RyanNeural"),
-    VoiceEntry("en_female_storytelling", "Victoria (Storytelling)", "chatterbox", "en", "female", "storytelling", "en-GB-SoniaNeural"),
+# Edge TTS voice catalog (always available as fallback)
+EDGE_TTS_VOICES: list[dict] = [
+    # English
+    {"voice_id": "en-US-GuyNeural", "name": "Guy (US)", "engine": "edge-tts", "gender": "male", "language_codes": ["en"], "style": "storytelling", "quality": "standard"},
+    {"voice_id": "en-US-ChristopherNeural", "name": "Christopher (US)", "engine": "edge-tts", "gender": "male", "language_codes": ["en"], "style": "cinematic", "quality": "standard"},
+    {"voice_id": "en-GB-RyanNeural", "name": "Ryan (UK)", "engine": "edge-tts", "gender": "male", "language_codes": ["en"], "style": "calm", "quality": "standard"},
+    {"voice_id": "en-US-JennyNeural", "name": "Jenny (US)", "engine": "edge-tts", "gender": "female", "language_codes": ["en"], "style": "documentary", "quality": "standard"},
+    # Hindi
+    {"voice_id": "hi-IN-MadhurNeural", "name": "Madhur (India)", "engine": "edge-tts", "gender": "male", "language_codes": ["hi"], "style": "documentary", "quality": "standard"},
+    {"voice_id": "hi-IN-SwaraNeural", "name": "Swara (India)", "engine": "edge-tts", "gender": "female", "language_codes": ["hi"], "style": "documentary", "quality": "standard"},
+    # Spanish
+    {"voice_id": "es-ES-AlvaroNeural", "name": "Alvaro (Spain)", "engine": "edge-tts", "gender": "male", "language_codes": ["es"], "style": "cinematic", "quality": "standard"},
+    {"voice_id": "es-MX-JorgeNeural", "name": "Jorge (Mexico)", "engine": "edge-tts", "gender": "male", "language_codes": ["es"], "style": "documentary", "quality": "standard"},
+    # French
+    {"voice_id": "fr-FR-HenriNeural", "name": "Henri (France)", "engine": "edge-tts", "gender": "male", "language_codes": ["fr"], "style": "calm", "quality": "standard"},
+    {"voice_id": "fr-FR-DeniseNeural", "name": "Denise (France)", "engine": "edge-tts", "gender": "female", "language_codes": ["fr"], "style": "calm", "quality": "standard"},
+    # German
+    {"voice_id": "de-DE-ConradNeural", "name": "Conrad (Germany)", "engine": "edge-tts", "gender": "male", "language_codes": ["de"], "style": "documentary", "quality": "standard"},
+    {"voice_id": "de-DE-KillianNeural", "name": "Killian (Germany)", "engine": "edge-tts", "gender": "male", "language_codes": ["de"], "style": "calm", "quality": "standard"},
+    # Japanese
+    {"voice_id": "ja-JP-KeitaNeural", "name": "Keita (Japan)", "engine": "edge-tts", "gender": "male", "language_codes": ["ja"], "style": "calm", "quality": "standard"},
+    {"voice_id": "ja-JP-NanamiNeural", "name": "Nanami (Japan)", "engine": "edge-tts", "gender": "female", "language_codes": ["ja"], "style": "calm", "quality": "standard"},
+    # Korean
+    {"voice_id": "ko-KR-InJoonNeural", "name": "InJoon (Korea)", "engine": "edge-tts", "gender": "male", "language_codes": ["ko"], "style": "documentary", "quality": "standard"},
+    # Chinese
+    {"voice_id": "zh-CN-YunxiNeural", "name": "Yunxi (China)", "engine": "edge-tts", "gender": "male", "language_codes": ["zh"], "style": "documentary", "quality": "standard"},
+    {"voice_id": "zh-CN-XiaoxiaoNeural", "name": "Xiaoxiao (China)", "engine": "edge-tts", "gender": "female", "language_codes": ["zh"], "style": "documentary", "quality": "standard"},
+    # Arabic
+    {"voice_id": "ar-SA-HamedNeural", "name": "Hamed (Saudi Arabia)", "engine": "edge-tts", "gender": "male", "language_codes": ["ar"], "style": "documentary", "quality": "standard"},
+    # Portuguese
+    {"voice_id": "pt-BR-AntonioNeural", "name": "Antonio (Brazil)", "engine": "edge-tts", "gender": "male", "language_codes": ["pt"], "style": "cinematic", "quality": "standard"},
+    # Russian
+    {"voice_id": "ru-RU-DmitryNeural", "name": "Dmitry (Russia)", "engine": "edge-tts", "gender": "male", "language_codes": ["ru"], "style": "documentary", "quality": "standard"},
+    # Italian
+    {"voice_id": "it-IT-DiegoNeural", "name": "Diego (Italy)", "engine": "edge-tts", "gender": "male", "language_codes": ["it"], "style": "cinematic", "quality": "standard"},
+    # Turkish
+    {"voice_id": "tr-TR-AhmetNeural", "name": "Ahmet (Turkey)", "engine": "edge-tts", "gender": "male", "language_codes": ["tr"], "style": "documentary", "quality": "standard"},
+    # Polish
+    {"voice_id": "pl-PL-MarekNeural", "name": "Marek (Poland)", "engine": "edge-tts", "gender": "male", "language_codes": ["pl"], "style": "documentary", "quality": "standard"},
+    # Dutch
+    {"voice_id": "nl-NL-MaartenNeural", "name": "Maarten (Netherlands)", "engine": "edge-tts", "gender": "male", "language_codes": ["nl"], "style": "calm", "quality": "standard"},
+    # Swedish
+    {"voice_id": "sv-SE-MattiasNeural", "name": "Mattias (Sweden)", "engine": "edge-tts", "gender": "male", "language_codes": ["sv"], "style": "calm", "quality": "standard"},
+    # Danish
+    {"voice_id": "da-DK-JeppeNeural", "name": "Jeppe (Denmark)", "engine": "edge-tts", "gender": "male", "language_codes": ["da"], "style": "calm", "quality": "standard"},
+    # Finnish
+    {"voice_id": "fi-FI-HarriNeural", "name": "Harri (Finland)", "engine": "edge-tts", "gender": "male", "language_codes": ["fi"], "style": "documentary", "quality": "standard"},
+    # Greek
+    {"voice_id": "el-GR-NestorasNeural", "name": "Nestoras (Greece)", "engine": "edge-tts", "gender": "male", "language_codes": ["el"], "style": "documentary", "quality": "standard"},
+    # Czech
+    {"voice_id": "cs-CZ-AntoninNeural", "name": "Antonin (Czech Republic)", "engine": "edge-tts", "gender": "male", "language_codes": ["cs"], "style": "documentary", "quality": "standard"},
+    # Romanian
+    {"voice_id": "ro-RO-EmilNeural", "name": "Emil (Romania)", "engine": "edge-tts", "gender": "male", "language_codes": ["ro"], "style": "documentary", "quality": "standard"},
+    # Hungarian
+    {"voice_id": "hu-HU-TamasNeural", "name": "Tamas (Hungary)", "engine": "edge-tts", "gender": "male", "language_codes": ["hu"], "style": "documentary", "quality": "standard"},
+    # Thai
+    {"voice_id": "th-TH-NiwatNeural", "name": "Niwat (Thailand)", "engine": "edge-tts", "gender": "male", "language_codes": ["th"], "style": "calm", "quality": "standard"},
+    # Vietnamese
+    {"voice_id": "vi-VN-NamMinhNeural", "name": "NamMinh (Vietnam)", "engine": "edge-tts", "gender": "male", "language_codes": ["vi"], "style": "documentary", "quality": "standard"},
+]
 
-    # ── Hindi ──
-    VoiceEntry("hi_male_documentary", "Arun (Documentary)", "qwen3", "hi", "male", "documentary", "hi-IN-MadhurNeural"),
-    VoiceEntry("hi_female_documentary", "Priya (Documentary)", "qwen3", "hi", "female", "documentary", "hi-IN-SwaraNeural"),
-    VoiceEntry("hi_male_neutral", "Raj (Neutral)", "qwen3", "hi", "male", "neutral", "hi-IN-MadhurNeural"),
-    VoiceEntry("hi_female_neutral", "Kavya (Neutral)", "qwen3", "hi", "female", "neutral", "hi-IN-SwaraNeural"),
-
-    # ── Spanish ──
-    VoiceEntry("es_male_documentary", "Carlos (Documentary)", "chatterbox", "es", "male", "documentary", "es-ES-AlvaroNeural"),
-    VoiceEntry("es_female_documentary", "Maria (Documentary)", "chatterbox", "es", "female", "documentary", "es-ES-ElviraNeural"),
-    VoiceEntry("es_male_cinematic", "Diego (Cinematic)", "chatterbox", "es", "male", "cinematic", "es-MX-JorgeNeural"),
-    VoiceEntry("es_female_cinematic", "Sofia (Cinematic)", "chatterbox", "es", "female", "cinematic", "es-MX-DaliaNeural"),
-
-    # ── French ──
-    VoiceEntry("fr_male_documentary", "Pierre (Documentary)", "luxtts", "fr", "male", "documentary", "fr-FR-HenriNeural"),
-    VoiceEntry("fr_female_documentary", "Claire (Documentary)", "luxtts", "fr", "female", "documentary", "fr-FR-DeniseNeural"),
-    VoiceEntry("fr_male_neutral", "Jean (Neutral)", "luxtts", "fr", "male", "neutral", "fr-FR-HenriNeural"),
-    VoiceEntry("fr_female_neutral", "Marie (Neutral)", "luxtts", "fr", "female", "neutral", "fr-FR-DeniseNeural"),
-
-    # ── German ──
-    VoiceEntry("de_male_documentary", "Hans (Documentary)", "luxtts", "de", "male", "documentary", "de-DE-ConradNeural"),
-    VoiceEntry("de_female_documentary", "Anna (Documentary)", "luxtts", "de", "female", "documentary", "de-DE-KatjaNeural"),
-    VoiceEntry("de_male_neutral", "Klaus (Neutral)", "qwen3", "de", "male", "neutral", "de-DE-ConradNeural"),
-    VoiceEntry("de_female_neutral", "Heidi (Neutral)", "qwen3", "de", "female", "neutral", "de-DE-KatjaNeural"),
-
-    # ── Japanese ──
-    VoiceEntry("ja_male_documentary", "Takeshi (Documentary)", "qwen3", "ja", "male", "documentary", "ja-JP-KeitaNeural"),
-    VoiceEntry("ja_female_documentary", "Yuki (Documentary)", "qwen3", "ja", "female", "documentary", "ja-JP-NanamiNeural"),
-    VoiceEntry("ja_male_neutral", "Haruto (Neutral)", "qwen3", "ja", "male", "neutral", "ja-JP-KeitaNeural"),
-    VoiceEntry("ja_female_neutral", "Sakura (Neutral)", "qwen3", "ja", "female", "neutral", "ja-JP-NanamiNeural"),
-
-    # ── Korean ──
-    VoiceEntry("ko_male_documentary", "Minho (Documentary)", "qwen3", "ko", "male", "documentary", "ko-KR-InJoonNeural"),
-    VoiceEntry("ko_female_documentary", "Jisoo (Documentary)", "qwen3", "ko", "female", "documentary", "ko-KR-SunHiNeural"),
-
-    # ── Chinese ──
-    VoiceEntry("zh_male_documentary", "Wei (Documentary)", "qwen3", "zh", "male", "documentary", "zh-CN-YunxiNeural"),
-    VoiceEntry("zh_female_documentary", "Mei (Documentary)", "qwen3", "zh", "female", "documentary", "zh-CN-XiaoxiaoNeural"),
-    VoiceEntry("zh_male_cinematic", "Long (Cinematic)", "qwen3", "zh", "male", "cinematic", "zh-CN-YunjianNeural"),
-    VoiceEntry("zh_female_cinematic", "Ling (Cinematic)", "qwen3", "zh", "female", "cinematic", "zh-CN-XiaohanNeural"),
-
-    # ── Arabic ──
-    VoiceEntry("ar_male_documentary", "Ahmed (Documentary)", "qwen3", "ar", "male", "documentary", "ar-SA-HamedNeural"),
-    VoiceEntry("ar_female_documentary", "Fatima (Documentary)", "qwen3", "ar", "female", "documentary", "ar-SA-ZariyahNeural"),
-
-    # ── Portuguese ──
-    VoiceEntry("pt_male_documentary", "Miguel (Documentary)", "chatterbox", "pt", "male", "documentary", "pt-BR-AntonioNeural"),
-    VoiceEntry("pt_female_documentary", "Ana (Documentary)", "chatterbox", "pt", "female", "documentary", "pt-BR-FranciscaNeural"),
-
-    # ── Russian ──
-    VoiceEntry("ru_male_documentary", "Ivan (Documentary)", "qwen3", "ru", "male", "documentary", "ru-RU-DmitryNeural"),
-    VoiceEntry("ru_female_documentary", "Natasha (Documentary)", "qwen3", "ru", "female", "documentary", "ru-RU-SvetlanaNeural"),
-
-    # ── Italian ──
-    VoiceEntry("it_male_documentary", "Marco (Documentary)", "chatterbox", "it", "male", "documentary", "it-IT-DiegoNeural"),
-    VoiceEntry("it_female_documentary", "Giulia (Documentary)", "chatterbox", "it", "female", "documentary", "it-IT-ElsaNeural"),
-
-    # ── Turkish ──
-    VoiceEntry("tr_male_documentary", "Emre (Documentary)", "qwen3", "tr", "male", "documentary", "tr-TR-AhmetNeural"),
-    VoiceEntry("tr_female_documentary", "Zeynep (Documentary)", "qwen3", "tr", "female", "documentary", "tr-TR-EmelNeural"),
-
-    # ── Dutch ──
-    VoiceEntry("nl_male_documentary", "Jan (Documentary)", "luxtts", "nl", "male", "documentary", "nl-NL-MaartenNeural"),
-    VoiceEntry("nl_female_documentary", "Eva (Documentary)", "luxtts", "nl", "female", "documentary", "nl-NL-ColetteNeural"),
-
-    # ── Swedish ──
-    VoiceEntry("sv_male_documentary", "Erik (Documentary)", "luxtts", "sv", "male", "documentary", "sv-SE-MattiasNeural"),
-    VoiceEntry("sv_female_documentary", "Astrid (Documentary)", "luxtts", "sv", "female", "documentary", "sv-SE-SofieNeural"),
-
-    # ── Danish ──
-    VoiceEntry("da_male_documentary", "Lars (Documentary)", "luxtts", "da", "male", "documentary", "da-DK-JeppeNeural"),
-    VoiceEntry("da_female_documentary", "Ida (Documentary)", "luxtts", "da", "female", "documentary", "da-DK-ChristelNeural"),
-
-    # ── Polish ──
-    VoiceEntry("pl_male_documentary", "Piotr (Documentary)", "qwen3", "pl", "male", "documentary", "pl-PL-MarekNeural"),
-    VoiceEntry("pl_female_documentary", "Kasia (Documentary)", "qwen3", "pl", "female", "documentary", "pl-PL-ZofiaNeural"),
-
-    # ── Finnish ──
-    VoiceEntry("fi_male_documentary", "Matti (Documentary)", "qwen3", "fi", "male", "documentary", "fi-FI-HarriNeural"),
-    VoiceEntry("fi_female_documentary", "Aino (Documentary)", "qwen3", "fi", "female", "documentary", "fi-FI-NooraNeural"),
-
-    # ── Greek ──
-    VoiceEntry("el_male_documentary", "Nikos (Documentary)", "qwen3", "el", "male", "documentary", "el-GR-NestorasNeural"),
-    VoiceEntry("el_female_documentary", "Elena (Documentary)", "qwen3", "el", "female", "documentary", "el-GR-AthinaNeural"),
-
-    # ── Czech ──
-    VoiceEntry("cs_male_documentary", "Tomas (Documentary)", "qwen3", "cs", "male", "documentary", "cs-CZ-AntoninNeural"),
-    VoiceEntry("cs_female_documentary", "Jana (Documentary)", "qwen3", "cs", "female", "documentary", "cs-CZ-VlastaNeural"),
-
-    # ── Romanian ──
-    VoiceEntry("ro_male_documentary", "Andrei (Documentary)", "qwen3", "ro", "male", "documentary", "ro-RO-EmilNeural"),
-    VoiceEntry("ro_female_documentary", "Ioana (Documentary)", "qwen3", "ro", "female", "documentary", "ro-RO-AlinaNeural"),
-
-    # ── Hungarian ──
-    VoiceEntry("hu_male_documentary", "Gabor (Documentary)", "qwen3", "hu", "male", "documentary", "hu-HU-TamasNeural"),
-    VoiceEntry("hu_female_documentary", "Zsofia (Documentary)", "qwen3", "hu", "female", "documentary", "hu-HU-NoemiNeural"),
-
-    # ── Thai ──
-    VoiceEntry("th_male_documentary", "Somchai (Documentary)", "qwen3", "th", "male", "documentary", "th-TH-NiwatNeural"),
-    VoiceEntry("th_female_documentary", "Ploy (Documentary)", "qwen3", "th", "female", "documentary", "th-TH-PremwadeeNeural"),
-
-    # ── Vietnamese ──
-    VoiceEntry("vi_male_documentary", "Minh (Documentary)", "qwen3", "vi", "male", "documentary", "vi-VN-NamMinhNeural"),
-    VoiceEntry("vi_female_documentary", "Linh (Documentary)", "qwen3", "vi", "female", "documentary", "vi-VN-HoaiMyNeural"),
+# Neural TTS engine voices (premium, require model download)
+NEURAL_TTS_VOICES: list[dict] = [
+    # Qwen3-TTS
+    {"voice_id": "qwen3-narrator-male", "name": "Qwen3 Male Narrator", "engine": "qwen3-tts", "gender": "male", "language_codes": ["en", "zh", "ja", "ko", "hi", "ar", "de", "ru", "tr", "pl", "fi", "el", "cs", "ro", "hu", "th", "vi"], "style": "documentary", "quality": "premium"},
+    {"voice_id": "qwen3-narrator-female", "name": "Qwen3 Female Narrator", "engine": "qwen3-tts", "gender": "female", "language_codes": ["en", "zh", "ja", "ko", "hi", "ar", "de", "ru", "tr", "pl", "fi", "el", "cs", "ro", "hu", "th", "vi"], "style": "documentary", "quality": "premium"},
+    # Chatterbox
+    {"voice_id": "chatterbox-cinematic-male", "name": "Cinematic Male", "engine": "chatterbox", "gender": "male", "language_codes": ["en", "es", "pt", "it", "fr"], "style": "cinematic", "quality": "premium"},
+    {"voice_id": "chatterbox-storyteller-male", "name": "Storyteller Male", "engine": "chatterbox", "gender": "male", "language_codes": ["en"], "style": "storytelling", "quality": "premium"},
+    {"voice_id": "chatterbox-narrator-female", "name": "Narrator Female", "engine": "chatterbox", "gender": "female", "language_codes": ["en", "es", "pt", "it"], "style": "documentary", "quality": "premium"},
+    # LuxTTS (Coqui XTTS v2)
+    {"voice_id": "lux-calm-male", "name": "Calm Male Narrator", "engine": "luxtts", "gender": "male", "language_codes": ["en", "fr", "nl", "sv", "da", "de"], "style": "calm", "quality": "premium"},
+    {"voice_id": "lux-neutral-female", "name": "Neutral Female Narrator", "engine": "luxtts", "gender": "female", "language_codes": ["en", "fr", "nl", "sv", "da", "de"], "style": "calm", "quality": "premium"},
 ]
 
 
 class VoiceLibrary:
     """
-    Expanded voice library with filtering by language, style, and gender.
+    Unified voice library across all TTS engines.
+
+    Provides browsing, filtering, and selection of voices
+    from Edge TTS, Qwen3-TTS, Chatterbox, and LuxTTS.
     """
 
     def __init__(self):
-        self._voices = list(VOICE_LIBRARY)
+        self._voices: list[VoiceEntry] = []
+        self._load_catalog()
 
-    def get_voices(
+    def _load_catalog(self) -> None:
+        """Load the full voice catalog."""
+        self._voices = []
+
+        # Add Edge TTS voices (always available)
+        for v in EDGE_TTS_VOICES:
+            self._voices.append(VoiceEntry(**v))
+
+        # Add neural TTS voices (may require model download)
+        for v in NEURAL_TTS_VOICES:
+            self._voices.append(VoiceEntry(**v))
+
+    def get_all_voices(self) -> list[VoiceEntry]:
+        """Get all voices in the library."""
+        return list(self._voices)
+
+    def get_voices_for_language(self, language_code: str) -> list[VoiceEntry]:
+        """
+        Get voices that support a specific language.
+
+        Args:
+            language_code: Language code (e.g., 'hi', 'es').
+
+        Returns:
+            List of VoiceEntry objects supporting the language.
+        """
+        return [
+            v for v in self._voices
+            if language_code in v.language_codes
+        ]
+
+    def get_voices_by_style(self, style: str) -> list[VoiceEntry]:
+        """
+        Get voices matching a narration style.
+
+        Args:
+            style: Narration style (documentary, cinematic, calm, storytelling).
+
+        Returns:
+            List of VoiceEntry objects matching the style.
+        """
+        return [
+            v for v in self._voices
+            if v.style == style
+        ]
+
+    def get_voices_by_gender(self, gender: str) -> list[VoiceEntry]:
+        """
+        Get voices matching a gender.
+
+        Args:
+            gender: Voice gender (male, female).
+
+        Returns:
+            List of VoiceEntry objects matching the gender.
+        """
+        return [
+            v for v in self._voices
+            if v.gender == gender
+        ]
+
+    def get_voices_by_engine(self, engine: str) -> list[VoiceEntry]:
+        """
+        Get voices from a specific TTS engine.
+
+        Args:
+            engine: Engine name (edge-tts, qwen3-tts, chatterbox, luxtts).
+
+        Returns:
+            List of VoiceEntry objects from the engine.
+        """
+        return [
+            v for v in self._voices
+            if v.engine == engine
+        ]
+
+    def search_voices(
         self,
         language: Optional[str] = None,
         gender: Optional[str] = None,
         style: Optional[str] = None,
+        engine: Optional[str] = None,
+        quality: Optional[str] = None,
     ) -> list[VoiceEntry]:
         """
-        Get voices matching the given criteria.
+        Search voices with multiple filters.
 
         Args:
-            language: Language code filter (e.g., 'en', 'hi').
-            gender: Gender filter ('male' or 'female').
-            style: Style filter ('cinematic', 'documentary', 'neutral', 'storytelling').
+            language: Filter by language code.
+            gender: Filter by gender.
+            style: Filter by narration style.
+            engine: Filter by TTS engine.
+            quality: Filter by quality level (standard, premium).
 
         Returns:
             List of matching VoiceEntry objects.
         """
-        result = self._voices
+        results = list(self._voices)
 
         if language:
-            result = [v for v in result if v.language == language]
+            results = [v for v in results if language in v.language_codes]
         if gender:
-            result = [v for v in result if v.gender == gender]
+            results = [v for v in results if v.gender == gender]
         if style:
-            result = [v for v in result if v.style == style]
+            results = [v for v in results if v.style == style]
+        if engine:
+            results = [v for v in results if v.engine == engine]
+        if quality:
+            results = [v for v in results if v.quality == quality]
 
-        return result
+        return results
 
     def get_voice_by_id(self, voice_id: str) -> Optional[VoiceEntry]:
-        """Get a specific voice by ID."""
-        return next((v for v in self._voices if v.voice_id == voice_id), None)
-
-    def get_best_voice(
-        self,
-        language: str,
-        gender: str = "male",
-        style: str = "documentary",
-    ) -> Optional[VoiceEntry]:
         """
-        Get the best matching voice for given criteria.
+        Get a specific voice by its ID.
 
-        Falls back to any available voice for the language if exact match not found.
-        """
-        # Try exact match
-        voices = self.get_voices(language=language, gender=gender, style=style)
-        if voices:
-            return voices[0]
-
-        # Fall back to same language + gender
-        voices = self.get_voices(language=language, gender=gender)
-        if voices:
-            return voices[0]
-
-        # Fall back to same language
-        voices = self.get_voices(language=language)
-        if voices:
-            return voices[0]
-
-        # No match
-        return None
-
-    def get_available_languages(self) -> list[str]:
-        """Get list of languages with available voices."""
-        return sorted(set(v.language for v in self._voices))
-
-    def get_available_styles(self, language: Optional[str] = None) -> list[str]:
-        """Get available styles, optionally filtered by language."""
-        voices = self._voices
-        if language:
-            voices = [v for v in voices if v.language == language]
-        return sorted(set(v.style for v in voices))
-
-    def get_available_genders(self, language: Optional[str] = None) -> list[str]:
-        """Get available genders, optionally filtered by language."""
-        voices = self._voices
-        if language:
-            voices = [v for v in voices if v.language == language]
-        return sorted(set(v.gender for v in voices))
-
-    def get_voice_count(self) -> int:
-        """Get total number of voices in the library."""
-        return len(self._voices)
-
-    def get_library_summary(self) -> dict:
-        """Get a summary of the voice library."""
-        languages = self.get_available_languages()
-        return {
-            "total_voices": len(self._voices),
-            "languages": len(languages),
-            "styles": sorted(set(v.style for v in self._voices)),
-            "engines": sorted(set(v.engine for v in self._voices)),
-            "by_language": {
-                lang: len(self.get_voices(language=lang))
-                for lang in languages
-            },
-        }
-
-    def format_for_display(
-        self,
-        language: Optional[str] = None,
-    ) -> list[list[str]]:
-        """
-        Format voices for UI display as table rows.
+        Args:
+            voice_id: Unique voice identifier.
 
         Returns:
-            List of [name, language, gender, style, engine] rows.
+            VoiceEntry or None if not found.
         """
-        voices = self.get_voices(language=language)
-        return [
-            [v.name, v.language, v.gender, v.style, v.engine]
-            for v in voices
-        ]
+        for v in self._voices:
+            if v.voice_id == voice_id:
+                return v
+        return None
+
+    def get_recommended_voice(
+        self,
+        language: str,
+        style: str = "documentary",
+        gender: str = "male",
+    ) -> Optional[VoiceEntry]:
+        """
+        Get the recommended voice for a language and style combination.
+
+        Prefers premium (neural) voices, falls back to Edge TTS.
+
+        Args:
+            language: Language code.
+            style: Narration style.
+            gender: Preferred gender.
+
+        Returns:
+            Best matching VoiceEntry, or None.
+        """
+        # Try premium voices first
+        premium = self.search_voices(
+            language=language, style=style, gender=gender, quality="premium"
+        )
+        if premium:
+            return premium[0]
+
+        # Try premium with any style
+        premium_any = self.search_voices(
+            language=language, gender=gender, quality="premium"
+        )
+        if premium_any:
+            return premium_any[0]
+
+        # Fall back to standard (Edge TTS)
+        standard = self.search_voices(
+            language=language, gender=gender, quality="standard"
+        )
+        if standard:
+            return standard[0]
+
+        # Any voice for the language
+        any_voice = self.search_voices(language=language)
+        if any_voice:
+            return any_voice[0]
+
+        return None
+
+    def get_supported_languages(self) -> dict[str, str]:
+        """Get all languages that have at least one voice available."""
+        available = set()
+        for v in self._voices:
+            available.update(v.language_codes)
+
+        return {
+            code: name
+            for code, name in SUPPORTED_LANGUAGES.items()
+            if code in available
+        }
+
+    def get_engine_summary(self) -> dict[str, int]:
+        """Get count of voices per engine."""
+        summary: dict[str, int] = {}
+        for v in self._voices:
+            summary[v.engine] = summary.get(v.engine, 0) + 1
+        return summary
