@@ -18,6 +18,7 @@ Coordinates all stages of the dubbing process:
 """
 
 import logging
+import os
 import shutil
 import time
 from dataclasses import dataclass, field
@@ -28,7 +29,7 @@ from dubbing_studio.audio.cleaner import AudioCleaner
 from dubbing_studio.audio.extractor import AudioExtractor
 from dubbing_studio.audio.mixer import AudioMixer
 from dubbing_studio.audio.segmenter import AudioSegment, AudioSegmenter
-from dubbing_studio.config import AppConfig
+from dubbing_studio.config import AppConfig, SUPPORTED_LANGUAGES
 from dubbing_studio.emotion.analyzer import EmotionAnalyzer, EmotionProfile
 from dubbing_studio.export.exporter import Exporter
 from dubbing_studio.narration.engine import CinematicNarrationEngine
@@ -109,6 +110,69 @@ class DubbingPipeline:
         self.cinematic_engine = CinematicNarrationEngine(self.config.cinematic)
         self.advanced_aligner = AdvancedTimingAligner(self.config.timing)
 
+    # Supported video file extensions
+    SUPPORTED_VIDEO_EXTENSIONS = {
+        ".mp4", ".mkv", ".avi", ".mov", ".wmv", ".flv", ".webm", ".m4v",
+        ".mpg", ".mpeg", ".3gp", ".ts",
+    }
+
+    # Maximum file size in bytes (10 GB)
+    MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024 * 1024
+
+    def validate_video(self, video_path: str) -> None:
+        """
+        Validate the input video file before processing.
+
+        Args:
+            video_path: Path to the video file.
+
+        Raises:
+            FileNotFoundError: If the video file does not exist.
+            ValueError: If the file format is unsupported or file is too large.
+        """
+        path = Path(video_path)
+
+        if not path.exists():
+            raise FileNotFoundError(f"Video file not found: {video_path}")
+
+        if not path.is_file():
+            raise ValueError(f"Path is not a file: {video_path}")
+
+        ext = path.suffix.lower()
+        if ext not in self.SUPPORTED_VIDEO_EXTENSIONS:
+            raise ValueError(
+                f"Unsupported video format '{ext}'. "
+                f"Supported formats: {', '.join(sorted(self.SUPPORTED_VIDEO_EXTENSIONS))}"
+            )
+
+        file_size = path.stat().st_size
+        if file_size == 0:
+            raise ValueError("Video file is empty (0 bytes)")
+
+        if file_size > self.MAX_FILE_SIZE_BYTES:
+            size_gb = file_size / (1024 ** 3)
+            max_gb = self.MAX_FILE_SIZE_BYTES / (1024 ** 3)
+            raise ValueError(
+                f"Video file is too large ({size_gb:.1f} GB). "
+                f"Maximum supported size is {max_gb:.0f} GB."
+            )
+
+    def validate_language(self, target_language: str) -> None:
+        """
+        Validate that the target language is supported.
+
+        Args:
+            target_language: Language code to validate.
+
+        Raises:
+            ValueError: If the language is not supported.
+        """
+        if target_language not in SUPPORTED_LANGUAGES:
+            raise ValueError(
+                f"Unsupported target language '{target_language}'. "
+                f"Supported languages: {', '.join(sorted(SUPPORTED_LANGUAGES.keys()))}"
+            )
+
     def process_video(
         self,
         video_path: str,
@@ -116,6 +180,7 @@ class DubbingPipeline:
         narrator_style: str = "documentary",
         progress_callback: Optional[Callable[[str, float], None]] = None,
         output_dir: Optional[str] = None,
+        preview_mode: bool = False,
     ) -> DubbingResult:
         """
         Process a single video through the full dubbing pipeline.
@@ -126,12 +191,18 @@ class DubbingPipeline:
             narrator_style: Style of narration.
             progress_callback: Optional callback(stage_name, progress_float).
             output_dir: Optional output directory override.
+            preview_mode: If True, only process the first 30 seconds.
 
         Returns:
             DubbingResult with all output paths and metadata.
         """
         start_time = time.time()
         video_path = str(Path(video_path).resolve())
+
+        # Validate inputs
+        self.validate_video(video_path)
+        self.validate_language(target_language)
+
         video_name = Path(video_path).stem
 
         # Setup working directories
@@ -146,14 +217,24 @@ class DubbingPipeline:
                 progress_callback(stage, progress)
 
         try:
+            # ── Preview mode: extract only first 30 seconds ──
+            preview_duration = 30.0 if preview_mode else None
+            actual_video_path = video_path
+
+            if preview_mode:
+                logger.info("Preview mode: processing first %.0f seconds only", preview_duration)
+                preview_video = str(work_dir / "preview_input.mp4")
+                self._extract_preview_clip(video_path, preview_video, preview_duration)
+                actual_video_path = preview_video
+
             # ── Stage 1: Audio Extraction ──
             report_progress("Audio Extraction", 0.0)
             raw_audio = str(work_dir / "raw_audio.wav")
-            self.extractor.extract_audio(video_path, raw_audio)
+            self.extractor.extract_audio(actual_video_path, raw_audio)
 
             bg_audio = str(work_dir / "background_audio.wav")
             try:
-                self.extractor.extract_background_audio(video_path, bg_audio)
+                self.extractor.extract_background_audio(actual_video_path, bg_audio)
             except Exception as e:
                 logger.warning("Background audio extraction failed: %s", e)
                 bg_audio = None
@@ -361,7 +442,7 @@ class DubbingPipeline:
             )
 
             self.renderer.render_video(
-                video_path=video_path,
+                video_path=actual_video_path,
                 audio_path=mixed_audio,
                 output_path=output_video,
                 subtitle_path=subtitle_for_embed,
@@ -494,6 +575,44 @@ class DubbingPipeline:
             self.mixer.concatenate_audio(audio_paths, output_path)
 
         return output_path
+
+    def _extract_preview_clip(
+        self, video_path: str, output_path: str, duration: float
+    ) -> None:
+        """
+        Extract a short preview clip from the beginning of a video.
+
+        Args:
+            video_path: Path to the source video.
+            output_path: Path for the output preview clip.
+            duration: Duration in seconds to extract.
+        """
+        import subprocess
+
+        cmd = [
+            "ffmpeg", "-y",
+            "-i", video_path,
+            "-t", str(duration),
+            "-c", "copy",
+            output_path,
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.returncode != 0:
+            logger.warning(
+                "Preview clip extraction with copy failed, re-encoding: %s",
+                result.stderr[:200],
+            )
+            cmd_reencode = [
+                "ffmpeg", "-y",
+                "-i", video_path,
+                "-t", str(duration),
+                "-c:v", "libx264", "-preset", "fast",
+                "-c:a", "aac",
+                output_path,
+            ]
+            subprocess.run(
+                cmd_reencode, capture_output=True, text=True, check=True
+            )
 
     def _cleanup_temp(self, work_dir: Path) -> None:
         """Remove temporary working directory."""
