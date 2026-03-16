@@ -5,16 +5,20 @@ Coordinates all stages of the dubbing process:
 1. Audio Extraction
 2. Audio Cleaning
 3. Silence Detection & Segmentation
-4. Speech Recognition
+4. Speech Recognition (with automatic Whisper model selection)
 5. Speaker Analysis
 6. Semantic Translation
 7. Narration Style Detection
 8. Automatic Voice Selection
 9. Neural Voice Generation
-10. Speech Timing Alignment
-11. Background Audio Mixing
+10. Speech Timing Alignment (<300ms deviation)
+11. Background Audio Mixing (with automatic ducking)
 12. Subtitle Generation
 13. Video Rendering
+
+The pipeline validates inputs at each stage and provides detailed
+progress reporting. Failed stages log errors and attempt graceful
+recovery where possible.
 """
 
 import logging
@@ -134,14 +138,27 @@ class DubbingPipeline:
                 progress_callback(stage, progress)
 
         try:
+            # ── Validate input ──
+            video_file = Path(video_path)
+            if not video_file.exists():
+                raise FileNotFoundError(f"Video file not found: {video_path}")
+            if video_file.stat().st_size == 0:
+                raise ValueError(f"Video file is empty: {video_path}")
+
             # ── Stage 1: Audio Extraction ──
             report_progress("Audio Extraction", 0.0)
             raw_audio = str(work_dir / "raw_audio.wav")
             self.extractor.extract_audio(video_path, raw_audio)
 
+            if not Path(raw_audio).exists() or Path(raw_audio).stat().st_size == 0:
+                raise RuntimeError("Audio extraction produced no output")
+
             bg_audio = str(work_dir / "background_audio.wav")
             try:
                 self.extractor.extract_background_audio(video_path, bg_audio)
+                if not Path(bg_audio).exists() or Path(bg_audio).stat().st_size == 0:
+                    logger.warning("Background audio is empty, skipping ducking")
+                    bg_audio = None
             except Exception as e:
                 logger.warning("Background audio extraction failed: %s", e)
                 bg_audio = None
@@ -158,16 +175,35 @@ class DubbingPipeline:
             report_progress("Segmentation", 2.0 / len(PIPELINE_STAGES))
             segments_dir = str(work_dir / "segments")
             audio_segments = self.segmenter.segment_audio(clean_audio, segments_dir)
+
+            if not audio_segments:
+                raise ValueError(
+                    "No audio segments detected. The video may contain no speech "
+                    "or the audio may be too quiet."
+                )
+            logger.info("Segmented audio into %d segments", len(audio_segments))
             report_progress("Segmentation", 3.0 / len(PIPELINE_STAGES))
 
             # ── Stage 4: Speech Recognition ──
             report_progress("Speech Recognition", 3.0 / len(PIPELINE_STAGES))
             transcription_segments = self.recognizer.transcribe_segments(audio_segments)
+
+            if not transcription_segments:
+                raise ValueError(
+                    "Speech recognition produced no results. "
+                    "The audio may not contain recognizable speech."
+                )
+
             detected_language = (
                 transcription_segments[0].language
                 if transcription_segments else "en"
             )
             full_text = " ".join(s.text for s in transcription_segments)
+            logger.info(
+                "Recognized %d segments in '%s': %s...",
+                len(transcription_segments), detected_language,
+                full_text[:100],
+            )
             report_progress("Speech Recognition", 4.0 / len(PIPELINE_STAGES))
 
             # ── Stage 5: Narration Analysis ──

@@ -3,6 +3,12 @@ Speech recognition using OpenAI Whisper.
 
 Provides timestamped transcription segments with word-level timing,
 automatic language detection, and hardware-optimized model selection.
+
+Features:
+- Automatic model selection based on available hardware (GPU memory, RAM)
+- GPU acceleration with automatic compute type selection
+- VAD pre-filtering for cleaner transcription
+- Graceful fallback when models are unavailable
 """
 
 import logging
@@ -16,6 +22,27 @@ from dubbing_studio.config import WhisperConfig
 from dubbing_studio.hardware.optimizer import HardwareOptimizer
 
 logger = logging.getLogger(__name__)
+
+# Model sizes ordered by quality (and resource requirements)
+WHISPER_MODEL_SIZES = ["tiny", "base", "small", "medium", "large-v3"]
+
+# Approximate VRAM requirements in MB for each model
+WHISPER_VRAM_REQUIREMENTS = {
+    "tiny": 400,
+    "base": 500,
+    "small": 1000,
+    "medium": 2500,
+    "large-v3": 5000,
+}
+
+# Approximate RAM requirements in GB for each model on CPU
+WHISPER_RAM_REQUIREMENTS = {
+    "tiny": 1.0,
+    "base": 1.5,
+    "small": 3.0,
+    "medium": 5.0,
+    "large-v3": 10.0,
+}
 
 
 @dataclass
@@ -49,15 +76,74 @@ class TranscriptionResult:
 
 
 class SpeechRecognizer:
-    """Speech recognition using OpenAI Whisper (local)."""
+    """Speech recognition using OpenAI Whisper (local).
+
+    Supports automatic model selection based on hardware capabilities,
+    GPU acceleration, and VAD pre-filtering.
+    """
 
     def __init__(self, config: Optional[WhisperConfig] = None):
         self.config = config or WhisperConfig()
         self._model = None
+        self._model_name: Optional[str] = None
+        self._device: Optional[str] = None
         self._optimizer = HardwareOptimizer()
 
+    def _select_model_size(self) -> str:
+        """Automatically select the best Whisper model for the available hardware.
+
+        Selection logic:
+        - GPU with >8GB VRAM: large-v3 (best quality)
+        - GPU with >4GB VRAM: medium
+        - GPU with >2GB VRAM: small
+        - GPU with <2GB or CPU with >8GB RAM: base
+        - Low-resource CPU: tiny
+
+        Returns:
+            Model size string.
+        """
+        if self._optimizer.has_gpu():
+            gpu_mem = self._optimizer.get_gpu_memory()
+            if gpu_mem is not None:
+                for model_name in reversed(WHISPER_MODEL_SIZES):
+                    if gpu_mem >= WHISPER_VRAM_REQUIREMENTS[model_name] * 1.5:
+                        logger.info(
+                            "Auto-selected Whisper model '%s' for GPU with %dMB VRAM",
+                            model_name, gpu_mem,
+                        )
+                        return model_name
+            return "base"
+        else:
+            # CPU mode: select based on RAM
+            hw_info = self._optimizer.detect_hardware()
+            ram_gb = hw_info.ram_gb
+            for model_name in reversed(WHISPER_MODEL_SIZES):
+                if ram_gb >= WHISPER_RAM_REQUIREMENTS[model_name] * 2.0:
+                    logger.info(
+                        "Auto-selected Whisper model '%s' for CPU with %.1fGB RAM",
+                        model_name, ram_gb,
+                    )
+                    return model_name
+            return "tiny"
+
+    def _select_device(self) -> str:
+        """Select compute device (cuda/cpu) based on availability."""
+        device = self.config.device
+        if device == "auto":
+            if self._optimizer.has_gpu():
+                device = "cuda"
+                logger.info("Using CUDA GPU for Whisper inference")
+            else:
+                device = "cpu"
+                logger.info("Using CPU for Whisper inference")
+        return device
+
     def _load_model(self) -> None:
-        """Load Whisper model with hardware-appropriate settings."""
+        """Load Whisper model with hardware-appropriate settings.
+
+        Automatically selects model size and device when configured to 'auto'.
+        Falls back to smaller models if the selected model fails to load.
+        """
         try:
             import whisper
         except ImportError:
@@ -66,31 +152,68 @@ class SpeechRecognizer:
                 "Install it with: pip install openai-whisper"
             )
 
-        device = self.config.device
-        if device == "auto":
-            device = "cuda" if self._optimizer.has_gpu() else "cpu"
-
+        device = self._select_device()
         model_size = self.config.model_size
 
-        # Auto-select model based on hardware
         if model_size == "auto":
-            if self._optimizer.has_gpu():
-                gpu_mem = self._optimizer.get_gpu_memory()
-                if gpu_mem and gpu_mem > 8000:
-                    model_size = "large-v3"
-                elif gpu_mem and gpu_mem > 4000:
-                    model_size = "medium"
-                else:
-                    model_size = "base"
-            else:
-                model_size = "base"
+            model_size = self._select_model_size()
 
-        logger.info(
-            "Loading Whisper model '%s' on device '%s'",
-            model_size, device,
+        # Try loading the selected model, fall back to smaller ones on failure
+        models_to_try = [model_size]
+        idx = WHISPER_MODEL_SIZES.index(model_size) if model_size in WHISPER_MODEL_SIZES else 1
+        for fallback in reversed(WHISPER_MODEL_SIZES[:idx]):
+            models_to_try.append(fallback)
+
+        last_error = None
+        for try_model in models_to_try:
+            try:
+                logger.info(
+                    "Loading Whisper model '%s' on device '%s'",
+                    try_model, device,
+                )
+                self._model = whisper.load_model(try_model, device=device)
+                self._model_name = try_model
+                self._device = device
+                logger.info(
+                    "Whisper model '%s' loaded successfully on %s",
+                    try_model, device,
+                )
+                return
+            except Exception as e:
+                last_error = e
+                logger.warning(
+                    "Failed to load Whisper model '%s' on %s: %s",
+                    try_model, device, e,
+                )
+                # If GPU loading fails, try CPU
+                if device == "cuda":
+                    try:
+                        logger.info("Retrying '%s' on CPU", try_model)
+                        self._model = whisper.load_model(try_model, device="cpu")
+                        self._model_name = try_model
+                        self._device = "cpu"
+                        logger.info(
+                            "Whisper model '%s' loaded on CPU (GPU fallback)",
+                            try_model,
+                        )
+                        return
+                    except Exception as cpu_err:
+                        logger.warning("CPU fallback also failed: %s", cpu_err)
+                        last_error = cpu_err
+
+        raise RuntimeError(
+            f"Failed to load any Whisper model. Last error: {last_error}. "
+            f"Tried models: {models_to_try}"
         )
-        self._model = whisper.load_model(model_size, device=device)
-        logger.info("Whisper model loaded successfully")
+
+    @property
+    def model_info(self) -> dict:
+        """Get information about the currently loaded model."""
+        return {
+            "model_name": self._model_name,
+            "device": self._device,
+            "loaded": self._model is not None,
+        }
 
     def transcribe_audio(
         self,
