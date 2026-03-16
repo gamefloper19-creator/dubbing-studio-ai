@@ -16,6 +16,47 @@ from dubbing_studio.tts.engine import TTSEngine, TTSResult
 logger = logging.getLogger(__name__)
 
 
+def _run_async(coro):
+    """Run an async coroutine safely, handling nested event loops (e.g. inside Gradio)."""
+    import asyncio
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+
+    if loop and loop.is_running():
+        # We're inside an existing event loop (e.g. Gradio)
+        # Create a new loop in a separate thread
+        import concurrent.futures
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+            future = pool.submit(asyncio.run, coro)
+            return future.result()
+    else:
+        return asyncio.run(coro)
+
+
+def _convert_to_wav(input_path: str, output_path: str) -> None:
+    """Convert audio file (e.g. MP3 from edge-tts) to WAV format."""
+    from pathlib import Path
+    cmd = [
+        "ffmpeg", "-y",
+        "-i", input_path,
+        "-acodec", "pcm_s16le",
+        "-ar", "24000",
+        "-ac", "1",
+        output_path,
+    ]
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        # Fallback: just rename the file and let FFmpeg handle format later
+        logger.warning("WAV conversion failed, using original: %s", result.stderr[:200])
+        import shutil
+        shutil.copy2(input_path, output_path)
+
+    # Clean up temp file
+    Path(input_path).unlink(missing_ok=True)
+
+
 class QwenTTS(TTSEngine):
     """
     Qwen3-TTS engine.
@@ -180,11 +221,17 @@ class QwenTTS(TTSEngine):
         voice = voice_map.get(language, "en-US-GuyNeural")
         rate_str = f"+{int((speed - 1) * 100)}%" if speed >= 1 else f"{int((speed - 1) * 100)}%"
 
+        # edge-tts outputs MP3; save to temp then convert to WAV
+        temp_mp3 = output_path + ".edgetts.mp3"
+
         async def _generate():
             communicate = edge_tts.Communicate(text, voice, rate=rate_str)
-            await communicate.save(output_path)
+            await communicate.save(temp_mp3)
 
-        asyncio.run(_generate())
+        _run_async(_generate())
+
+        # Convert MP3 to WAV for pipeline compatibility
+        _convert_to_wav(temp_mp3, output_path)
 
         # Get duration
         duration = self._get_audio_duration(output_path)

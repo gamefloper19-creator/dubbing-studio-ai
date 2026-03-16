@@ -13,6 +13,8 @@ from typing import Optional
 
 from dubbing_studio.tts.engine import TTSEngine, TTSResult
 
+from dubbing_studio.tts.qwen_tts import _run_async, _convert_to_wav
+
 logger = logging.getLogger(__name__)
 
 
@@ -133,11 +135,17 @@ class LuxTTS(TTSEngine):
         voice = voice_map.get(language, "en-GB-RyanNeural")
         rate_str = f"+{int((speed - 1) * 100)}%" if speed >= 1 else f"{int((speed - 1) * 100)}%"
 
+        # edge-tts outputs MP3; save to temp then convert to WAV
+        temp_mp3 = output_path + ".edgetts.mp3"
+
         async def _generate():
             communicate = edge_tts.Communicate(text, voice, rate=rate_str)
-            await communicate.save(output_path)
+            await communicate.save(temp_mp3)
 
-        asyncio.run(_generate())
+        _run_async(_generate())
+
+        # Convert MP3 to WAV for pipeline compatibility
+        _convert_to_wav(temp_mp3, output_path)
 
         duration = self._get_audio_duration(output_path)
 

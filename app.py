@@ -16,6 +16,7 @@ from dubbing_studio import __app_name__, __version__
 from dubbing_studio.batch.processor import BatchProcessor, JobStatus
 from dubbing_studio.config import AppConfig, SUPPORTED_LANGUAGES
 from dubbing_studio.hardware.optimizer import HardwareOptimizer
+from dubbing_studio.models.manager import ModelManager
 from dubbing_studio.pipeline import DubbingPipeline, PIPELINE_STAGES
 
 # Configure logging
@@ -260,6 +261,15 @@ def get_system_info():
         return f"Hardware detection error: {e}"
 
 
+def get_model_status():
+    """Get model manager status report."""
+    try:
+        manager = ModelManager()
+        return manager.get_status_report()
+    except Exception as e:
+        return f"Model status error: {e}"
+
+
 # ── Build Gradio Interface ──
 
 def create_ui() -> gr.Blocks:
@@ -498,7 +508,27 @@ def create_ui() -> gr.Blocks:
                     outputs=[batch_status],
                 )
 
-            # ── Tab 3: System Info ──
+            # ── Tab 3: Model Manager ──
+            with gr.Tab("Model Manager", id="models"):
+                gr.Markdown("### AI Model Manager")
+                gr.Markdown(
+                    "Manage the AI models used by the dubbing pipeline. "
+                    "Required models must be installed for the system to work."
+                )
+
+                model_status = gr.Textbox(
+                    label="Model Status",
+                    lines=25,
+                    interactive=False,
+                    value=get_model_status(),
+                )
+
+                model_refresh_btn = gr.Button("Refresh Status", size="sm")
+                model_refresh_btn.click(
+                    fn=get_model_status, outputs=[model_status]
+                )
+
+            # ── Tab 4: System Info ──
             with gr.Tab("System Info", id="system"):
                 gr.Markdown("### Hardware & System Information")
 
