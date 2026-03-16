@@ -3,14 +3,20 @@ Qwen3-TTS engine integration.
 
 Qwen3-TTS is a neural TTS model from Alibaba that supports
 multiple languages with high-quality voice synthesis.
+Best for Asian and Middle Eastern languages.
+
+Falls back to Edge TTS when the native model is unavailable.
 """
 
-import json
 import logging
-import subprocess
 from pathlib import Path
 from typing import Optional
 
+from dubbing_studio.tts.edge_tts_fallback import (
+    generate_edge_tts,
+    get_audio_duration,
+    is_edge_tts_available,
+)
 from dubbing_studio.tts.engine import TTSEngine, TTSResult
 
 logger = logging.getLogger(__name__)
@@ -38,6 +44,7 @@ class QwenTTS(TTSEngine):
         return [
             "en", "zh", "ja", "ko", "hi", "ar", "de", "ru",
             "tr", "pl", "fi", "el", "cs", "ro", "hu", "th", "vi",
+            "bn", "ta", "te", "kn", "mr", "gu", "ur", "id",
         ]
 
     def _load_model(self) -> None:
@@ -146,48 +153,16 @@ class QwenTTS(TTSEngine):
         language: str,
         speed: float,
     ) -> TTSResult:
-        """
-        Fallback TTS using edge-tts (Microsoft Edge TTS).
-        """
-        try:
-            import edge_tts
-            import asyncio
-        except ImportError:
-            raise ImportError(
-                "edge-tts is required as fallback. Install with: pip install edge-tts"
-            )
+        """Fallback TTS using Edge TTS (Microsoft)."""
+        generate_edge_tts(
+            text=text,
+            output_path=output_path,
+            language=language,
+            gender="male",
+            speed=speed,
+        )
 
-        voice_map = {
-            "en": "en-US-GuyNeural",
-            "hi": "hi-IN-MadhurNeural",
-            "zh": "zh-CN-YunxiNeural",
-            "ja": "ja-JP-KeitaNeural",
-            "ko": "ko-KR-InJoonNeural",
-            "ar": "ar-SA-HamedNeural",
-            "de": "de-DE-ConradNeural",
-            "ru": "ru-RU-DmitryNeural",
-            "tr": "tr-TR-AhmetNeural",
-            "pl": "pl-PL-MarekNeural",
-            "fi": "fi-FI-HarriNeural",
-            "el": "el-GR-NestorasNeural",
-            "cs": "cs-CZ-AntoninNeural",
-            "ro": "ro-RO-EmilNeural",
-            "hu": "hu-HU-TamasNeural",
-            "th": "th-TH-NiwatNeural",
-            "vi": "vi-VN-NamMinhNeural",
-        }
-
-        voice = voice_map.get(language, "en-US-GuyNeural")
-        rate_str = f"+{int((speed - 1) * 100)}%" if speed >= 1 else f"{int((speed - 1) * 100)}%"
-
-        async def _generate():
-            communicate = edge_tts.Communicate(text, voice, rate=rate_str)
-            await communicate.save(output_path)
-
-        asyncio.run(_generate())
-
-        # Get duration
-        duration = self._get_audio_duration(output_path)
+        duration = get_audio_duration(output_path)
 
         return TTSResult(
             audio_path=output_path,
@@ -195,19 +170,6 @@ class QwenTTS(TTSEngine):
             sample_rate=24000,
             text=text,
         )
-
-    def _get_audio_duration(self, path: str) -> float:
-        """Get audio file duration using ffprobe."""
-        cmd = [
-            "ffprobe", "-v", "quiet",
-            "-print_format", "json",
-            "-show_format", path,
-        ]
-        result = subprocess.run(cmd, capture_output=True, text=True)
-        if result.returncode == 0:
-            info = json.loads(result.stdout)
-            return float(info.get("format", {}).get("duration", 0))
-        return 0.0
 
     def list_voices(self, language: str = "") -> list[dict]:
         """List available voices."""
@@ -221,11 +183,8 @@ class QwenTTS(TTSEngine):
 
     def is_available(self) -> bool:
         """Check if Qwen3-TTS dependencies are available."""
-        try:
-            import edge_tts
+        if is_edge_tts_available():
             return True
-        except ImportError:
-            pass
         try:
             from transformers import AutoModelForCausalLM
             return True

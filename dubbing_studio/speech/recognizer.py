@@ -1,9 +1,14 @@
 """
 Speech recognition using OpenAI Whisper.
+
+Provides timestamped transcription segments with word-level timing,
+automatic language detection, and hardware-optimized model selection.
 """
 
 import logging
-from dataclasses import dataclass
+import os
+from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Optional
 
 from dubbing_studio.audio.segmenter import AudioSegment
@@ -11,6 +16,15 @@ from dubbing_studio.config import WhisperConfig
 from dubbing_studio.hardware.optimizer import HardwareOptimizer
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class WordTimestamp:
+    """A single word with precise timing."""
+    word: str
+    start: float
+    end: float
+    probability: float = 0.0
 
 
 @dataclass
@@ -22,6 +36,7 @@ class TranscriptionSegment:
     text: str
     language: str
     confidence: float = 0.0
+    words: list[WordTimestamp] = field(default_factory=list)
 
 
 @dataclass
@@ -30,6 +45,7 @@ class TranscriptionResult:
     segments: list[TranscriptionSegment]
     detected_language: str
     full_text: str
+    duration: float = 0.0
 
 
 class SpeechRecognizer:
@@ -82,17 +98,31 @@ class SpeechRecognizer:
         language: Optional[str] = None,
     ) -> TranscriptionResult:
         """
-        Transcribe an audio file.
+        Transcribe an audio file with timestamped segments.
+
+        Uses Whisper's built-in segment and word-level timestamps
+        for precise timing alignment downstream.
 
         Args:
             audio_path: Path to audio file.
             language: Optional language code (None = auto-detect).
 
         Returns:
-            TranscriptionResult with segments and detected language.
+            TranscriptionResult with segments, word timestamps,
+            and detected language.
         """
         if self._model is None:
             self._load_model()
+
+        # Validate input file exists and is non-empty
+        audio_file = Path(audio_path)
+        if not audio_file.exists():
+            raise FileNotFoundError(f"Audio file not found: {audio_path}")
+        if audio_file.stat().st_size == 0:
+            logger.warning("Audio file is empty: %s", audio_path)
+            return TranscriptionResult(
+                segments=[], detected_language="unknown", full_text="",
+            )
 
         options = {
             "beam_size": self.config.beam_size,
@@ -108,27 +138,48 @@ class SpeechRecognizer:
 
         segments = []
         for i, seg in enumerate(result.get("segments", [])):
+            text = seg["text"].strip()
+            if not text:
+                continue
+
+            # Extract word-level timestamps when available
+            words = []
+            for w in seg.get("words", []):
+                words.append(WordTimestamp(
+                    word=w.get("word", "").strip(),
+                    start=w.get("start", seg["start"]),
+                    end=w.get("end", seg["end"]),
+                    probability=w.get("probability", 0.0),
+                ))
+
             segments.append(TranscriptionSegment(
                 segment_id=f"{i + 1:03d}",
                 start_time=seg["start"],
                 end_time=seg["end"],
-                text=seg["text"].strip(),
+                text=text,
                 language=result.get("language", "unknown"),
                 confidence=seg.get("avg_logprob", 0.0),
+                words=words,
             ))
 
         detected_lang = result.get("language", "unknown")
         full_text = result.get("text", "").strip()
 
+        # Calculate total audio duration from segments
+        duration = 0.0
+        if segments:
+            duration = segments[-1].end_time
+
         logger.info(
-            "Transcription complete: %d segments, language=%s",
-            len(segments), detected_lang,
+            "Transcription complete: %d segments, language=%s, duration=%.1fs",
+            len(segments), detected_lang, duration,
         )
 
         return TranscriptionResult(
             segments=segments,
             detected_language=detected_lang,
             full_text=full_text,
+            duration=duration,
         )
 
     def transcribe_segments(
@@ -139,12 +190,15 @@ class SpeechRecognizer:
         """
         Transcribe a list of audio segments.
 
+        Each segment is transcribed individually, then timestamps are
+        adjusted to absolute positions in the original timeline.
+
         Args:
             audio_segments: List of AudioSegment objects with file paths.
             language: Optional language code.
 
         Returns:
-            List of TranscriptionSegment objects.
+            List of TranscriptionSegment objects with absolute timestamps.
         """
         if self._model is None:
             self._load_model()
@@ -156,9 +210,36 @@ class SpeechRecognizer:
                 logger.warning("Segment %s has no file path, skipping", seg.segment_id)
                 continue
 
-            result = self.transcribe_audio(seg.file_path, language)
+            if not Path(seg.file_path).exists():
+                logger.warning("Segment file missing: %s", seg.file_path)
+                continue
+
+            try:
+                result = self.transcribe_audio(seg.file_path, language)
+            except Exception as e:
+                logger.warning(
+                    "Failed to transcribe segment %s: %s", seg.segment_id, e
+                )
+                continue
+
+            if not result.segments:
+                logger.warning(
+                    "No speech detected in segment %s", seg.segment_id
+                )
+                continue
 
             for tseg in result.segments:
+                # Adjust word timestamps to absolute position
+                adjusted_words = [
+                    WordTimestamp(
+                        word=w.word,
+                        start=seg.start_time + w.start,
+                        end=seg.start_time + w.end,
+                        probability=w.probability,
+                    )
+                    for w in tseg.words
+                ]
+
                 # Adjust timing to absolute position
                 all_transcriptions.append(TranscriptionSegment(
                     segment_id=seg.segment_id,
@@ -167,8 +248,13 @@ class SpeechRecognizer:
                     text=tseg.text,
                     language=tseg.language,
                     confidence=tseg.confidence,
+                    words=adjusted_words,
                 ))
 
+        logger.info(
+            "Transcribed %d segments from %d audio chunks",
+            len(all_transcriptions), len(audio_segments),
+        )
         return all_transcriptions
 
     def unload_model(self) -> None:
