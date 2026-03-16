@@ -4,6 +4,7 @@ Dubbing Studio - Main Entry Point
 
 Usage:
     python main.py                  # Launch Gradio GUI
+    python main.py desktop          # Launch desktop (PySide6) GUI
     python main.py --cli VIDEO      # CLI mode for single video
     python main.py --batch DIR      # CLI mode for batch processing
 """
@@ -220,6 +221,9 @@ def main():
         help="Subtitle file format",
     )
 
+    # Desktop GUI
+    subparsers.add_parser("desktop", help="Launch standalone desktop GUI (PySide6)")
+
     # CLI batch
     batch_parser = subparsers.add_parser("batch", help="Batch process videos")
     batch_parser.add_argument("batch_dir", help="Directory containing videos")
@@ -257,6 +261,9 @@ def main():
         cli_single(args)
     elif args.command == "batch":
         cli_batch(args)
+    elif args.command == "desktop":
+        from desktop_app import main as desktop_main
+        desktop_main()
     else:
         # Default: launch GUI
         from app import create_ui
