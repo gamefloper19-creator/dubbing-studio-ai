@@ -1,0 +1,104 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint-and-test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.10", "3.11", "3.12"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install ruff
+
+      - name: Lint with ruff
+        run: |
+          ruff check dubbing_studio/ app.py main.py --select E,F,W --ignore E501,W503
+
+      - name: Verify imports
+        run: |
+          python -c "
+          import dubbing_studio
+          from dubbing_studio.config import AppConfig, SUPPORTED_LANGUAGES
+          from dubbing_studio.pipeline import DubbingPipeline
+          from dubbing_studio.hardware.optimizer import HardwareOptimizer
+          from dubbing_studio.tts.voice_library import VoiceLibrary
+          from dubbing_studio.models.manager import ModelManager
+          from dubbing_studio.audio.cleaner import AudioCleaner
+          from dubbing_studio.audio.segmenter import AudioSegmenter
+          from dubbing_studio.audio.mixer import AudioMixer
+          from dubbing_studio.speech.recognizer import SpeechRecognizer
+          from dubbing_studio.speech.analyzer import NarrationAnalyzer
+          from dubbing_studio.translation.translator import Translator
+          from dubbing_studio.export.exporter import Exporter
+          from dubbing_studio.emotion.analyzer import EmotionAnalyzer
+          from dubbing_studio.cloning.voice_cloner import VoiceCloner
+          from dubbing_studio.diarization.speaker_detector import SpeakerDetector
+          from dubbing_studio.narration.engine import CinematicNarrationEngine
+          from dubbing_studio.timing.advanced_aligner import AdvancedTimingAligner
+          from dubbing_studio.youtube.pipeline import YouTubeDubbingPipeline
+          print('All imports OK')
+
+          lib = VoiceLibrary()
+          print(f'Voice Library: {lib.get_voice_count()} voices, {len(lib.get_available_languages())} languages')
+
+          hw = HardwareOptimizer()
+          info = hw.detect_hardware()
+          print(f'Hardware: CPU={info.cpu_count}, RAM={info.ram_gb:.1f}GB, GPU={info.has_gpu}')
+
+          mm = ModelManager()
+          models = mm.scan_models()
+          installed = sum(1 for m in models.values() if m.installed)
+          print(f'Models: {installed}/{len(models)} installed')
+
+          print(f'Languages: {len(SUPPORTED_LANGUAGES)}')
+          print('Verification complete')
+          "
+
+  build-check:
+    runs-on: ubuntu-latest
+    needs: lint-and-test
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyinstaller
+
+      - name: Verify PyInstaller spec
+        run: |
+          python -c "
+          from build import APP_NAME, MAIN_SCRIPT
+          print(f'App: {APP_NAME}')
+          print(f'Entry: {MAIN_SCRIPT}')
+          print('Build configuration valid')
+          "
