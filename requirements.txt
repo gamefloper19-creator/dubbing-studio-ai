@@ -19,6 +19,9 @@ edge-tts>=6.1.0
 # Hardware Detection
 psutil>=5.9.0
 
+# Desktop GUI
+PySide6>=6.5.0
+
 # YouTube Download
 # yt-dlp must be installed separately: pip install yt-dlp
 

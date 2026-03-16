@@ -19,6 +19,7 @@ setup(
         "google-generativeai>=0.5.0",
         "edge-tts>=6.1.0",
         "psutil>=5.9.0",
+        "PySide6>=6.5.0",
     ],
     extras_require={
         "gpu": [
@@ -64,6 +65,10 @@ setup(
     entry_points={
         "console_scripts": [
             "dubbing-studio=main:main",
+            "dubbing-studio-desktop=desktop_app:main",
+        ],
+        "gui_scripts": [
+            "dubbing-studio-gui=desktop_app:main",
         ],
     },
     classifiers=[
