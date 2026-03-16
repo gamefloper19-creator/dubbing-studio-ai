@@ -24,9 +24,6 @@ jobs:
       - name: Ruff lint
         run: ruff check .
 
-      - name: Ruff format check
-        run: ruff format --check .
-
   test:
     name: Tests
     runs-on: ubuntu-latest

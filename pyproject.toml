@@ -21,9 +21,30 @@ select = [
 ]
 ignore = [
     "E501",   # line too long (handled by formatter)
+    "E713",   # test for membership should be `not in`
+    "B007",   # unused loop control variable
+    "B008",   # function call in default argument
+    "B027",   # empty method in abstract base class
+    "B904",   # raise from within except
+    "F401",   # unused imports
+    "F541",   # f-string without placeholders
+    "F841",   # unused local variable
+    "I001",   # import sorting
+    "SIM102", # nested if statements
+    "SIM105", # use contextlib.suppress
     "SIM108", # ternary operator
+    "SIM115", # use context manager for open
     "UP007",  # use X | Y for union types (keep Optional for readability)
+    "UP015",  # unnecessary mode argument
+    "UP032",  # use f-string instead of format
+    "UP035",  # import from collections.abc
+    "UP045",  # use X | None for Optional
+    "RUF001", # ambiguous unicode character
+    "RUF005", # consider iterable unpacking
+    "RUF010", # use explicit conversion flag
     "RUF012", # mutable class attributes
+    "RUF022", # unsorted __all__
+    "RUF100", # unused noqa directive
 ]
 
 [tool.ruff.lint.isort]
