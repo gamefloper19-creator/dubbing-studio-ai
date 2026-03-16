@@ -2,10 +2,14 @@
 Global configuration for Dubbing Studio.
 """
 
+import json
+import logging
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -282,3 +286,95 @@ class AppConfig:
             config.whisper.model_size = whisper_model
 
         return config
+
+    @classmethod
+    def from_file(cls, path: str) -> "AppConfig":
+        """
+        Load configuration from a JSON or YAML file.
+
+        Supports .json, .yaml, and .yml file extensions.
+        Values from the file override defaults; environment variables
+        are applied on top.
+
+        Args:
+            path: Path to the configuration file.
+
+        Returns:
+            AppConfig instance with merged settings.
+
+        Raises:
+            FileNotFoundError: If the config file does not exist.
+            ValueError: If the file format is unsupported.
+        """
+        config_path = Path(path)
+        if not config_path.exists():
+            raise FileNotFoundError(f"Config file not found: {path}")
+
+        ext = config_path.suffix.lower()
+        if ext == ".json":
+            data = json.loads(config_path.read_text(encoding="utf-8"))
+        elif ext in (".yaml", ".yml"):
+            try:
+                import yaml
+            except ImportError:
+                raise ImportError(
+                    "PyYAML is required to load YAML config files. "
+                    "Install with: pip install pyyaml"
+                )
+            data = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+        else:
+            raise ValueError(
+                f"Unsupported config file format '{ext}'. "
+                "Use .json, .yaml, or .yml."
+            )
+
+        if not isinstance(data, dict):
+            raise ValueError("Config file must contain a top-level mapping/object.")
+
+        # Start from env-based config then overlay file values
+        config = cls.from_env()
+        cls._apply_dict(config, data)
+        logger.info("Configuration loaded from %s", path)
+        return config
+
+    @staticmethod
+    def _apply_dict(config: "AppConfig", data: dict) -> None:
+        """
+        Recursively apply dictionary values to a config object.
+
+        Only sets attributes that already exist on the target dataclass
+        to prevent typos from silently creating new attributes.
+        """
+        # Map of top-level keys to their sub-config objects
+        section_map = {
+            "audio": config.audio,
+            "whisper": config.whisper,
+            "translation": config.translation,
+            "voice": config.voice,
+            "timing": config.timing,
+            "mixing": config.mixing,
+            "subtitle": config.subtitle,
+            "export": config.export,
+            "batch": config.batch,
+            "emotion": config.emotion,
+            "cloning": config.cloning,
+            "diarization": config.diarization,
+            "cinematic": config.cinematic,
+            "youtube": config.youtube,
+            "model_management": config.model_management,
+        }
+
+        for key, value in data.items():
+            if key in section_map and isinstance(value, dict):
+                sub_config = section_map[key]
+                for sub_key, sub_value in value.items():
+                    if hasattr(sub_config, sub_key):
+                        setattr(sub_config, sub_key, sub_value)
+                    else:
+                        logger.warning(
+                            "Unknown config key '%s.%s', ignoring", key, sub_key
+                        )
+            elif hasattr(config, key):
+                setattr(config, key, value)
+            else:
+                logger.warning("Unknown top-level config key '%s', ignoring", key)

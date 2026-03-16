@@ -116,6 +116,7 @@ def process_single_video(
     subtitle_format: str,
     bg_volume: float,
     gemini_api_key: str,
+    preview_mode: bool = False,
     progress=gr.Progress(track_tqdm=True),
 ):
     """Process a single video through the dubbing pipeline."""
@@ -156,6 +157,7 @@ def process_single_video(
             target_language=target_language,
             narrator_style=narrator_style,
             progress_callback=on_progress,
+            preview_mode=preview_mode,
         )
 
         # Build status summary
@@ -513,20 +515,6 @@ def create_ui() -> gr.Blocks:
 
     with gr.Blocks(
         title=f"{__app_name__} v{__version__}",
-        theme=gr.themes.Soft(
-            primary_hue="blue",
-            secondary_hue="slate",
-        ),
-        css="""
-        .main-header {
-            text-align: center;
-            margin-bottom: 20px;
-        }
-        .stage-info {
-            font-family: monospace;
-            font-size: 13px;
-        }
-        """,
     ) as app:
 
         gr.Markdown(
@@ -599,6 +587,12 @@ def create_ui() -> gr.Blocks:
                                 info="Required for translation. Can also be set via GEMINI_API_KEY env var.",
                             )
 
+                            preview_mode_input = gr.Checkbox(
+                                value=False,
+                                label="Preview Mode (first 30 seconds only)",
+                                info="Process only the first 30 seconds for a quick preview",
+                            )
+
                         process_btn = gr.Button(
                             "Start Dubbing",
                             variant="primary",
@@ -638,6 +632,7 @@ def create_ui() -> gr.Blocks:
                         sub_format,
                         bg_volume,
                         gemini_key,
+                        preview_mode_input,
                     ],
                     outputs=[
                         video_output,
@@ -1006,6 +1001,20 @@ def main():
         server_port=7860,
         share=False,
         show_error=True,
+        theme=gr.themes.Soft(
+            primary_hue="blue",
+            secondary_hue="slate",
+        ),
+        css="""
+        .main-header {
+            text-align: center;
+            margin-bottom: 20px;
+        }
+        .stage-info {
+            font-family: monospace;
+            font-size: 13px;
+        }
+        """,
     )
 
 
