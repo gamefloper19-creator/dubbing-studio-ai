@@ -1,0 +1,25 @@
+# Dubbing Studio - Dependencies
+# ================================
+
+# Core
+gradio>=4.0.0
+
+# Speech Recognition
+openai-whisper>=20231117
+
+# Translation
+google-generativeai>=0.5.0
+
+# TTS Engines (edge-tts as universal fallback)
+edge-tts>=6.1.0
+
+# Audio Processing
+# FFmpeg must be installed separately (system package)
+
+# Hardware Detection
+psutil>=5.9.0
+
+# Optional: Native TTS engines (install separately if needed)
+# pip install chatterbox-tts
+# pip install TTS
+# pip install transformers torch
