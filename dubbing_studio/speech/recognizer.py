@@ -206,7 +206,7 @@ class SpeechRecognizer:
             for tseg in result.segments:
                 # Adjust timing to absolute position
                 all_transcriptions.append(TranscriptionSegment(
-                    segment_id=seg.segment_id,
+                    segment_id=f"{seg.segment_id}_{idx+1:03d}",
                     start_time=seg.start_time + tseg.start_time,
                     end_time=seg.start_time + tseg.end_time,
                     text=tseg.text,

@@ -99,11 +99,13 @@ class VideoRenderer:
 
         if sub_ext == ".ass":
             # ASS subtitles with styling
-            subtitle_filter = f"ass='{subtitle_path}'"
+            safe_path = subtitle_path.replace("\\", "/").replace(":", "\\:")
+            subtitle_filter = f"ass='{safe_path}'"
         else:
             # SRT/VTT subtitles
+            safe_path = subtitle_path.replace("\\", "/").replace(":", "\\:")
             subtitle_filter = (
-                f"subtitles='{subtitle_path}'"
+                f"subtitles='{safe_path}'"
                 f":force_style='FontSize={self.subtitle_config.font_size},"
                 f"PrimaryColour=&H00FFFFFF,"
                 f"OutlineColour=&H00000000,"

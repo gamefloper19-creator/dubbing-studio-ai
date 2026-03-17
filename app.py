@@ -31,6 +31,10 @@ _pipeline: Optional[DubbingPipeline] = None
 _batch_processor: Optional[BatchProcessor] = None
 _hardware_info = None
 
+# Gradio Progress compatibility (older versions may not have gr.Progress)
+_ProgressCls = getattr(gr, "Progress", None)
+_PROGRESS = _ProgressCls(track_tqdm=True) if _ProgressCls else None
+
 
 def get_config() -> AppConfig:
     """Get or create app configuration."""
@@ -76,7 +80,7 @@ def process_single_video(
     subtitle_format: str,
     bg_volume: float,
     gemini_api_key: str,
-    progress=gr.Progress(track_tqdm=True),
+    progress=_PROGRESS,
 ):
     """Process a single video through the dubbing pipeline."""
     if video_file is None:
@@ -106,7 +110,8 @@ def process_single_video(
     def on_progress(stage: str, prog: float):
         pct = int(prog * 100)
         status_log.append(f"[{pct:3d}%] {stage}")
-        progress(prog, desc=stage)
+        if progress:
+            progress(prog, desc=stage)
 
     try:
         video_path = video_file if isinstance(video_file, str) else video_file.name
@@ -165,7 +170,7 @@ def process_batch_videos(
     bg_volume: float,
     gemini_api_key: str,
     max_concurrent: int,
-    progress=gr.Progress(track_tqdm=True),
+    progress=_PROGRESS,
 ):
     """Process multiple videos in batch."""
     if not video_files:
@@ -205,10 +210,11 @@ def process_batch_videos(
     status_lines.append("-" * 40)
 
     def on_batch_progress(batch_progress):
-        progress(
-            batch_progress.overall_progress,
-            desc=f"Batch: {batch_progress.completed_jobs}/{batch_progress.total_jobs} done",
-        )
+        if progress:
+            progress(
+                batch_progress.overall_progress,
+                desc=f"Batch: {batch_progress.completed_jobs}/{batch_progress.total_jobs} done",
+            )
 
     try:
         jobs = batch.process_all(
@@ -267,18 +273,83 @@ def create_ui() -> gr.Blocks:
 
     with gr.Blocks(
         title=f"{__app_name__} v{__version__}",
-        theme=gr.themes.Soft(
-            primary_hue="blue",
+        theme=gr.themes.Base(
+            primary_hue="amber",
             secondary_hue="slate",
         ),
         css="""
+        @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@500;600&family=Source+Sans+3:wght@400;500;600&display=swap');
+        :root {
+            --bg: #0b0b0b;
+            --bg-2: #14213D;
+            --panel: #101521;
+            --card: #121826;
+            --text: #F5F5F5;
+            --muted: #E5E5E5;
+            --accent: #FCA311;
+            --border: rgba(255, 255, 255, 0.08);
+            --shadow: rgba(0, 0, 0, 0.35);
+        }
+        .gradio-container {
+            background:
+                radial-gradient(1000px 500px at 10% 0%, rgba(20, 33, 61, 0.6), transparent),
+                radial-gradient(800px 600px at 90% 10%, rgba(252, 163, 17, 0.08), transparent),
+                linear-gradient(180deg, #0b0b0b 0%, #101521 100%);
+            color: var(--text);
+            font-family: "Source Sans 3", sans-serif;
+        }
         .main-header {
             text-align: center;
             margin-bottom: 20px;
         }
+        .main-header h1 {
+            font-family: "Playfair Display", serif;
+            font-weight: 600;
+            letter-spacing: 0.5px;
+            color: var(--text);
+        }
+        .main-header h3 {
+            font-family: "Source Sans 3", sans-serif;
+            letter-spacing: 2px;
+            text-transform: uppercase;
+            color: var(--accent);
+        }
         .stage-info {
-            font-family: monospace;
+            font-family: "Source Sans 3", sans-serif;
             font-size: 13px;
+            background: #0c1120;
+            border: 1px solid var(--border);
+        }
+        .gradio-container .block, .gradio-container .panel, .gradio-container .form {
+            background: var(--card);
+            border: 1px solid var(--border);
+            box-shadow: 0 8px 24px var(--shadow);
+        }
+        .gradio-container input, .gradio-container textarea, .gradio-container select {
+            background: #0f172a;
+            color: var(--text);
+            border: 1px solid var(--border);
+        }
+        .gradio-container input:focus, .gradio-container textarea:focus, .gradio-container select:focus {
+            border-color: var(--accent);
+            box-shadow: 0 0 0 2px rgba(252, 163, 17, 0.2);
+        }
+        .gradio-container button, .gradio-container .button {
+            background: var(--accent);
+            color: #000;
+            border: none;
+            font-weight: 600;
+        }
+        .gradio-container button:hover, .gradio-container .button:hover {
+            filter: brightness(0.95);
+        }
+        .gradio-container .tabitem, .gradio-container .tab-nav button {
+            background: transparent;
+            color: var(--muted);
+        }
+        .gradio-container .tab-nav button.selected {
+            color: var(--accent);
+            border-bottom: 2px solid var(--accent);
         }
         """,
     ) as app:
