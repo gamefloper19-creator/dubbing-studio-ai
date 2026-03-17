@@ -38,7 +38,8 @@ a = Analysis(
     ],
     hiddenimports=[
         # Core dependencies
-        "gradio",
+        "PyQt6",
+        "qasync",
         "psutil",
         "edge_tts",
 
@@ -102,6 +103,7 @@ a = Analysis(
         "chatterbox",
         "tensorflow",
         "tensorboard",
+        "gradio",
     ],
     win_no_prefer_redirects=False,
     win_private_assemblies=False,

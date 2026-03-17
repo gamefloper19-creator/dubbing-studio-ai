@@ -258,17 +258,16 @@ def main():
     elif args.command == "batch":
         cli_batch(args)
     else:
-        # Default: launch GUI
-        from app import create_ui
-        app = create_ui()
-        port = getattr(args, "port", 7860)
-        share = getattr(args, "share", False)
-        app.launch(
-            server_name="0.0.0.0",
-            server_port=port,
-            share=share,
-            show_error=True,
-        )
+        # Default: launch native GUI
+        import sys
+        from PyQt6.QtWidgets import QApplication
+        from app import DubbingStudioGUI
+        
+        qt_app = QApplication(sys.argv)
+        qt_app.setStyle("Fusion")
+        window = DubbingStudioGUI()
+        window.show()
+        sys.exit(qt_app.exec())
 
 
 if __name__ == "__main__":

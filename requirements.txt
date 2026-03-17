@@ -1,8 +1,9 @@
 # Dubbing Studio - Dependencies
 # ================================
 
-# Core
-gradio>=4.0.0
+# Core GUI
+PyQt6>=6.5.0
+qasync>=0.24.0
 
 # Speech Recognition
 openai-whisper>=20231117

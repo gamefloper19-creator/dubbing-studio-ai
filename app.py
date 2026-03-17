@@ -1,698 +1,330 @@
-"""
-Dubbing Studio - Gradio Web Interface
-
-Professional AI Documentary Dubbing Platform GUI.
-"""
-
-import logging
+import sys
 import os
-import time
-from pathlib import Path
+import asyncio
 from typing import Optional
+from pathlib import Path
 
-import gradio as gr
+from PyQt6.QtWidgets import (
+    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
+    QLabel, QPushButton, QComboBox, QFileDialog, QProgressBar, 
+    QTextEdit, QCheckBox, QSlider, QTabWidget, QGroupBox, QLineEdit
+)
+from PyQt6.QtCore import Qt, QThread, pyqtSignal
+from PyQt6.QtGui import QFont, QPalette, QColor, QIcon
 
-from dubbing_studio import __app_name__, __version__
-from dubbing_studio.batch.processor import BatchProcessor, JobStatus
+# Import dubbing studio components
 from dubbing_studio.config import AppConfig, SUPPORTED_LANGUAGES
-from dubbing_studio.hardware.optimizer import HardwareOptimizer
-from dubbing_studio.models.manager import ModelManager
-from dubbing_studio.pipeline import DubbingPipeline, PIPELINE_STAGES
-from dubbing_studio.tts.voice_library import VoiceLibrary
+from dubbing_studio.pipeline import DubbingPipeline
+from dubbing_studio import __app_name__, __version__
+import logging
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-)
-logger = logging.getLogger(__name__)
-
-# ── Real-time log capture ──
-_log_buffer: list[str] = []
-_MAX_LOG_LINES = 200
-
-
-class GUILogHandler(logging.Handler):
-    """Capture log messages for the GUI log panel."""
-
-    def emit(self, record: logging.LogRecord) -> None:
-        try:
-            msg = self.format(record)
-            _log_buffer.append(msg)
-            if len(_log_buffer) > _MAX_LOG_LINES:
-                _log_buffer.pop(0)
-        except Exception:
-            pass
-
-
-# Attach the GUI log handler to the root logger
-_gui_handler = GUILogHandler()
-_gui_handler.setFormatter(
-    logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s", datefmt="%H:%M:%S")
-)
-logging.getLogger().addHandler(_gui_handler)
-
-# ── Global state ──
-_config: Optional[AppConfig] = None
-_pipeline: Optional[DubbingPipeline] = None
-_batch_processor: Optional[BatchProcessor] = None
-_hardware_info = None
-
-
-def get_config() -> AppConfig:
-    """Get or create app configuration."""
-    global _config
-    if _config is None:
-        _config = AppConfig.from_env()
-        _config.setup_dirs()
-    return _config
-
-
-def get_pipeline() -> DubbingPipeline:
-    """Get or create the dubbing pipeline."""
-    global _pipeline
-    if _pipeline is None:
-        _pipeline = DubbingPipeline(get_config())
-    return _pipeline
-
-
-def get_hardware_info():
-    """Get hardware information."""
-    global _hardware_info
-    if _hardware_info is None:
-        optimizer = HardwareOptimizer()
-        _hardware_info = optimizer.detect_hardware()
-    return _hardware_info
-
-
-# ── Language options ──
 LANGUAGE_CHOICES = [(name, code) for code, name in sorted(SUPPORTED_LANGUAGES.items(), key=lambda x: x[1])]
 NARRATOR_STYLES = ["documentary", "cinematic", "calm", "storytelling"]
 WHISPER_MODELS = ["tiny", "base", "medium", "large-v3"]
 SUBTITLE_FORMATS = ["srt", "vtt", "ass"]
 
-
-# ── Processing functions ──
-
-def process_single_video(
-    video_file,
-    target_language: str,
-    narrator_style: str,
-    whisper_model: str,
-    embed_subtitles: bool,
-    subtitle_format: str,
-    bg_volume: float,
-    gemini_api_key: str,
-    progress=gr.Progress(track_tqdm=True),
-):
-    """Process a single video through the dubbing pipeline."""
-    if video_file is None:
-        return None, None, None, "Please upload a video file."
-
-    if not gemini_api_key and not os.environ.get("GEMINI_API_KEY"):
-        return None, None, None, "Please provide a Gemini API key for translation."
-
-    # Update config
-    config = get_config()
-    if gemini_api_key:
-        config.translation.api_key = gemini_api_key
-    config.whisper.model_size = whisper_model
-    config.subtitle.embed_in_video = embed_subtitles
-    config.subtitle.format = subtitle_format
-    config.mixing.background_volume = bg_volume / 100.0
-    config.voice.narrator_style = narrator_style
-
-    # Reinitialize pipeline with updated config
-    global _pipeline
-    _pipeline = DubbingPipeline(config)
-
-    pipeline = get_pipeline()
-
-    status_log = []
-
-    def on_progress(stage: str, prog: float):
-        pct = int(prog * 100)
-        status_log.append(f"[{pct:3d}%] {stage}")
-        progress(prog, desc=stage)
-
-    try:
-        video_path = video_file if isinstance(video_file, str) else video_file.name
-
-        result = pipeline.process_video(
-            video_path=video_path,
-            target_language=target_language,
-            narrator_style=narrator_style,
-            progress_callback=on_progress,
-        )
-
-        # Build status summary
-        summary = (
-            f"Dubbing Complete!\n"
-            f"─────────────────────────────\n"
-            f"Source Language: {result.source_language}\n"
-            f"Target Language: {result.target_language}\n"
-            f"Segments: {result.total_segments}\n"
-            f"Duration: {result.total_duration:.1f}s\n"
-            f"Processing Time: {result.processing_time:.1f}s\n"
-        )
-        if result.narration_style:
-            summary += (
-                f"Narrator: {result.narration_style.gender}, "
-                f"{result.narration_style.tone}, "
-                f"{result.narration_style.pacing} pace\n"
+class WorkerThread(QThread):
+    progress_update = pyqtSignal(str, float)
+    finished = pyqtSignal(object)
+    error = pyqtSignal(str)
+    
+    def __init__(self, config, video_path, target_language, narrator_style):
+        super().__init__()
+        self.config = config
+        self.video_path = video_path
+        self.target_language = target_language
+        self.narrator_style = narrator_style
+        
+    def run(self):
+        try:
+            pipeline = DubbingPipeline(self.config)
+            
+            def progress_callback(stage: str, progress: float):
+                self.progress_update.emit(stage, progress)
+                
+            result = pipeline.process_video(
+                video_path=self.video_path,
+                target_language=self.target_language,
+                narrator_style=self.narrator_style,
+                progress_callback=progress_callback
             )
+            self.finished.emit(result)
+        except Exception as e:
+            self.error.emit(str(e))
 
-        # Return outputs
-        subtitle_file = None
-        for fmt, path in result.subtitle_paths.items():
-            if Path(path).exists():
-                subtitle_file = path
-                break
+class DubbingStudioGUI(QMainWindow):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle(f"{__app_name__} v{__version__} - Native GUI")
+        self.resize(800, 600)
+        self.setup_theme()
+        self.init_ui()
+        self.config = AppConfig.from_env()
+        self.config.setup_dirs()
+        self.worker = None
 
-        return (
-            result.output_video_path,
-            result.output_audio_path,
-            subtitle_file,
-            summary,
+    def setup_theme(self):
+        # Dark Neon Theme
+        palette = QPalette()
+        palette.setColor(QPalette.ColorRole.Window, QColor(18, 18, 24))
+        palette.setColor(QPalette.ColorRole.WindowText, QColor(220, 220, 220))
+        palette.setColor(QPalette.ColorRole.Base, QColor(28, 28, 38))
+        palette.setColor(QPalette.ColorRole.AlternateBase, QColor(38, 38, 50))
+        palette.setColor(QPalette.ColorRole.ToolTipBase, QColor(255, 255, 255))
+        palette.setColor(QPalette.ColorRole.ToolTipText, QColor(255, 255, 255))
+        palette.setColor(QPalette.ColorRole.Text, QColor(230, 230, 230))
+        palette.setColor(QPalette.ColorRole.Button, QColor(36, 36, 50))
+        palette.setColor(QPalette.ColorRole.ButtonText, QColor(250, 250, 250))
+        palette.setColor(QPalette.ColorRole.Highlight, QColor(0, 153, 255)) # Neon Blue
+        palette.setColor(QPalette.ColorRole.HighlightedText, QColor(255, 255, 255))
+        self.setPalette(palette)
+        
+        self.setStyleSheet("""
+            QWidget {
+                font-family: 'Segoe UI', Arial, sans-serif;
+            }
+            QPushButton {
+                background-color: #0078d7;
+                color: white;
+                border: none;
+                padding: 8px 16px;
+                border-radius: 4px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #005a9e;
+            }
+            QPushButton:disabled {
+                background-color: #333333;
+                color: #888888;
+            }
+            QPushButton#primaryBtn {
+                background-color: #d6006e; /* Neon Pink */
+                font-size: 14px;
+                padding: 10px 20px;
+            }
+            QPushButton#primaryBtn:hover {
+                background-color: #a30054;
+            }
+            QGroupBox {
+                border: 1px solid #3c3c50;
+                border-radius: 6px;
+                margin-top: 10px;
+                font-weight: bold;
+                color: #00e5ff; /* Cyan */
+            }
+            QGroupBox::title {
+                subcontrol-origin: margin;
+                left: 10px;
+                padding: 0 3px 0 3px;
+            }
+            QComboBox, QLineEdit {
+                background-color: #1e1e28;
+                border: 1px solid #3c3c50;
+                color: white;
+                padding: 4px;
+                border-radius: 2px;
+            }
+            QProgressBar {
+                border: 1px solid #3c3c50;
+                border-radius: 4px;
+                text-align: center;
+                background-color: #1e1e28;
+            }
+            QProgressBar::chunk {
+                background-color: #00e5ff; /* Cyan progress */
+                width: 10px;
+                margin: 0.5px;
+            }
+            QTextEdit {
+                background-color: #1a1a24;
+                border: 1px solid #3c3c50;
+                color: #00ffcc; /* Mint log text */
+                font-family: Consolas, monospace;
+            }
+        """)
+
+    def init_ui(self):
+        main_widget = QWidget()
+        self.setCentralWidget(main_widget)
+        layout = QVBoxLayout(main_widget)
+        
+        # Header
+        header = QLabel(f"<b>{__app_name__}</b> - AI Dubbing Studio")
+        header.setFont(QFont("Arial", 16))
+        header.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        header.setStyleSheet("color: #00e5ff; margin-bottom: 10px;")
+        layout.addWidget(header)
+        
+        tabs = QTabWidget()
+        layout.addWidget(tabs)
+        
+        # Single Video Tab
+        single_tab = QWidget()
+        self.setup_single_tab(single_tab)
+        tabs.addTab(single_tab, "Single Video")
+        
+        # Logs Panel
+        log_group = QGroupBox("Processing Output & Logs")
+        log_layout = QVBoxLayout(log_group)
+        self.log_output = QTextEdit()
+        self.log_output.setReadOnly(True)
+        log_layout.addWidget(self.log_output)
+        
+        # Progress
+        progress_layout = QHBoxLayout()
+        self.status_label = QLabel("Idle")
+        self.status_label.setFixedWidth(200)
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setRange(0, 100)
+        progress_layout.addWidget(self.status_label)
+        progress_layout.addWidget(self.progress_bar)
+        log_layout.addLayout(progress_layout)
+        
+        layout.addWidget(log_group)
+
+    def setup_single_tab(self, tab):
+        layout = QVBoxLayout(tab)
+        
+        # Video Input
+        upload_group = QGroupBox("Input Video")
+        upload_layout = QHBoxLayout(upload_group)
+        self.video_path_lbl = QLabel("No video selected")
+        self.video_path_lbl.setStyleSheet("color: #aaaaaa;")
+        btn_browse = QPushButton("Browse Video...")
+        btn_browse.clicked.connect(self.browse_video)
+        upload_layout.addWidget(btn_browse)
+        upload_layout.addWidget(self.video_path_lbl, 1)
+        layout.addWidget(upload_group)
+        
+        # Settings
+        settings_group = QGroupBox("Dubbing Settings")
+        settings_layout = QVBoxLayout(settings_group)
+        
+        row1 = QHBoxLayout()
+        row1.addWidget(QLabel("Target Language:"))
+        self.lang_cb = QComboBox()
+        for name, code in LANGUAGE_CHOICES:
+            self.lang_cb.addItem(name, code)
+        # Default to Hindi
+        hi_idx = self.lang_cb.findData("hi")
+        if hi_idx >= 0: self.lang_cb.setCurrentIndex(hi_idx)
+        row1.addWidget(self.lang_cb, 1)
+        
+        row1.addWidget(QLabel("Narrator Style:"))
+        self.style_cb = QComboBox()
+        self.style_cb.addItems(NARRATOR_STYLES)
+        row1.addWidget(self.style_cb, 1)
+        settings_layout.addLayout(row1)
+        
+        row2 = QHBoxLayout()
+        row2.addWidget(QLabel("Gemini API Key:"))
+        self.api_key_input = QLineEdit()
+        self.api_key_input.setEchoMode(QLineEdit.EchoMode.Password)
+        self.api_key_input.setPlaceholderText("Required for translation or use GEMINI_API_KEY env var")
+        self.api_key_input.setText(os.environ.get("GEMINI_API_KEY", ""))
+        row2.addWidget(self.api_key_input, 1)
+        settings_layout.addLayout(row2)
+        
+        adv_group = QGroupBox("Advanced Options")
+        adv_layout = QHBoxLayout(adv_group)
+        
+        adv_layout.addWidget(QLabel("Whisper Model:"))
+        self.whisper_cb = QComboBox()
+        self.whisper_cb.addItems(WHISPER_MODELS)
+        self.whisper_cb.setCurrentText("base")
+        adv_layout.addWidget(self.whisper_cb)
+        
+        self.embed_chk = QCheckBox("Embed Subtitles")
+        adv_layout.addWidget(self.embed_chk)
+        
+        settings_layout.addWidget(adv_group)
+        layout.addWidget(settings_group)
+        
+        layout.addStretch()
+        
+        self.start_btn = QPushButton("Start Dubbing")
+        self.start_btn.setObjectName("primaryBtn")
+        self.start_btn.clicked.connect(self.start_dubbing)
+        self.start_btn.setMinimumHeight(45)
+        layout.addWidget(self.start_btn)
+        
+        self.video_file = None
+
+    def browse_video(self):
+        file, _ = QFileDialog.getOpenFileName(
+            self, "Select Video", "", "Video Files (*.mp4 *.mkv *.avi *.mov *.webm)"
         )
-
-    except Exception as e:
-        error_msg = f"Error: {str(e)}\n\nLog:\n" + "\n".join(status_log[-10:])
-        logger.error("Processing failed: %s", e, exc_info=True)
-        return None, None, None, error_msg
-
-
-def process_batch_videos(
-    video_files,
-    target_language: str,
-    narrator_style: str,
-    whisper_model: str,
-    embed_subtitles: bool,
-    subtitle_format: str,
-    bg_volume: float,
-    gemini_api_key: str,
-    max_concurrent: int,
-    progress=gr.Progress(track_tqdm=True),
-):
-    """Process multiple videos in batch."""
-    if not video_files:
-        return "No videos uploaded."
-
-    if not gemini_api_key and not os.environ.get("GEMINI_API_KEY"):
-        return "Please provide a Gemini API key for translation."
-
-    # Update config
-    config = get_config()
-    if gemini_api_key:
-        config.translation.api_key = gemini_api_key
-    config.whisper.model_size = whisper_model
-    config.subtitle.embed_in_video = embed_subtitles
-    config.subtitle.format = subtitle_format
-    config.mixing.background_volume = bg_volume / 100.0
-    config.voice.narrator_style = narrator_style
-    config.batch.max_concurrent = max_concurrent
-
-    global _pipeline
-    _pipeline = DubbingPipeline(config)
-    pipeline = get_pipeline()
-
-    # Setup batch processor
-    batch = BatchProcessor(config.batch)
-
-    video_paths = []
-    for vf in video_files:
-        path = vf if isinstance(vf, str) else vf.name
-        video_paths.append(path)
-
-    batch.add_videos(video_paths, target_language, narrator_style)
-
-    status_lines = [f"Batch Processing: {len(video_paths)} videos"]
-    status_lines.append(f"Target Language: {SUPPORTED_LANGUAGES.get(target_language, target_language)}")
-    status_lines.append(f"Max Concurrent: {max_concurrent}")
-    status_lines.append("─" * 40)
-
-    def on_batch_progress(batch_progress):
-        progress(
-            batch_progress.overall_progress,
-            desc=f"Batch: {batch_progress.completed_jobs}/{batch_progress.total_jobs} done",
-        )
-
-    try:
-        jobs = batch.process_all(
-            dubbing_function=pipeline.process_video_for_batch,
-            progress_callback=on_batch_progress,
-        )
-
-        # Build results summary
-        for job in jobs:
-            status = "DONE" if job.status == JobStatus.COMPLETED else "FAILED"
-            video_name = Path(job.video_path).name
-            if job.status == JobStatus.COMPLETED:
-                elapsed = job.end_time - job.start_time
-                status_lines.append(f"  [{status}] {video_name} ({elapsed:.1f}s) -> {job.output_path}")
-            else:
-                status_lines.append(f"  [{status}] {video_name}: {job.error_message[:100]}")
-
-        batch_info = batch.get_progress()
-        status_lines.append("─" * 40)
-        status_lines.append(
-            f"Results: {batch_info.completed_jobs} completed, "
-            f"{batch_info.failed_jobs} failed"
-        )
-
-        return "\n".join(status_lines)
-
-    except Exception as e:
-        return f"Batch processing failed: {str(e)}"
-
-
-def get_system_info():
-    """Get system hardware information for display."""
-    try:
-        info = get_hardware_info()
-        lines = [
-            f"Platform: {info.platform}",
-            f"GPU: {'Yes' if info.has_gpu else 'No'} ({info.gpu_name})",
-        ]
-        if info.has_gpu:
-            lines.append(f"GPU Memory: {info.gpu_memory_mb} MB")
-        lines.extend([
-            f"CPU Cores: {info.cpu_count}",
-            f"RAM: {info.ram_gb:.1f} GB",
-            f"Recommended Whisper: {info.recommended_whisper_model}",
-            f"Recommended Batch Size: {info.recommended_batch_size}",
-        ])
-        return "\n".join(lines)
-    except Exception as e:
-        return f"Hardware detection error: {e}"
-
-
-def get_model_status():
-    """Get model installation status for display."""
-    try:
-        manager = ModelManager()
-        results = manager.preload_essential_models()
-        lines = ["Model Availability:"]
-        lines.append("-" * 40)
-        for name, available in results.items():
-            status = "Installed" if available else "Not Installed"
-            lines.append(f"  {name}: {status}")
-        lines.append("")
-        lines.append(f"Model cache: {manager.cache_dir}")
-        lines.append(f"Cache size: {manager.get_cache_size_mb():.1f} MB")
-        return "\n".join(lines)
-    except Exception as e:
-        return f"Model status check error: {e}"
-
-
-def get_voice_library_info():
-    """Get voice library information for display."""
-    try:
-        library = VoiceLibrary()
-        voices = library.get_all_voices()
-        summary = library.get_engine_summary()
-
-        lines = [f"Total voices: {len(voices)}"]
-        lines.append("-" * 40)
-        lines.append("Voices per engine:")
-        for engine, count in sorted(summary.items()):
-            lines.append(f"  {engine}: {count}")
-        lines.append("")
-        lines.append("Languages with voice support:")
-        supported = library.get_supported_languages()
-        for code, name in sorted(supported.items(), key=lambda x: x[1]):
-            lang_voices = library.get_voices_for_language(code)
-            lines.append(f"  {name} ({code}): {len(lang_voices)} voices")
-
-        return "\n".join(lines)
-    except Exception as e:
-        return f"Voice library error: {e}"
-
-
-def get_real_time_logs():
-    """Get the current real-time log buffer contents."""
-    if not _log_buffer:
-        return "No log messages yet. Process a video to see real-time logs."
-    return "\n".join(_log_buffer[-100:])
-
-
-def clear_logs():
-    """Clear the log buffer."""
-    _log_buffer.clear()
-    return "Logs cleared."
-
-
-# ── Build Gradio Interface ──
-
-def create_ui() -> gr.Blocks:
-    """Create the Gradio web interface."""
-
-    with gr.Blocks(
-        title=f"{__app_name__} v{__version__}",
-        theme=gr.themes.Soft(
-            primary_hue="blue",
-            secondary_hue="slate",
-        ),
-        css="""
-        .main-header {
-            text-align: center;
-            margin-bottom: 20px;
-        }
-        .stage-info {
-            font-family: monospace;
-            font-size: 13px;
-        }
-        .log-panel {
-            font-family: monospace;
-            font-size: 12px;
-        }
-        """,
-    ) as app:
-
-        gr.Markdown(
-            f"""
-            # {__app_name__} v{__version__}
-            ### Professional AI Documentary Dubbing Platform
-            *Transform videos into any language with natural narration and accurate timing*
-            """,
-            elem_classes=["main-header"],
-        )
-
-        with gr.Tabs():
-
-            # ── Tab 1: Single Video ──
-            with gr.Tab("Single Video Dubbing", id="single"):
-                with gr.Row():
-                    with gr.Column(scale=1):
-                        gr.Markdown("### Upload & Settings")
-
-                        video_input = gr.Video(
-                            label="Upload Video",
-                            sources=["upload"],
-                        )
-
-                        target_lang = gr.Dropdown(
-                            choices=LANGUAGE_CHOICES,
-                            value="hi",
-                            label="Target Language",
-                            info="Select the language to dub into",
-                        )
-
-                        narrator_style_input = gr.Dropdown(
-                            choices=NARRATOR_STYLES,
-                            value="documentary",
-                            label="Narrator Style",
-                            info="Choose narration style",
-                        )
-
-                        with gr.Accordion("Advanced Settings", open=False):
-                            whisper_model_input = gr.Dropdown(
-                                choices=WHISPER_MODELS,
-                                value="base",
-                                label="Whisper Model",
-                                info="Larger models are more accurate but slower",
-                            )
-
-                            embed_subs = gr.Checkbox(
-                                value=False,
-                                label="Embed Subtitles in Video",
-                            )
-
-                            sub_format = gr.Dropdown(
-                                choices=SUBTITLE_FORMATS,
-                                value="srt",
-                                label="Subtitle Format",
-                            )
-
-                            bg_volume = gr.Slider(
-                                minimum=0,
-                                maximum=50,
-                                value=15,
-                                step=1,
-                                label="Background Audio Volume (%)",
-                            )
-
-                            gemini_key = gr.Textbox(
-                                label="Gemini API Key",
-                                type="password",
-                                placeholder="Enter your Google Gemini API key",
-                                info="Required for translation. Can also be set via GEMINI_API_KEY env var.",
-                            )
-
-                        process_btn = gr.Button(
-                            "Start Dubbing",
-                            variant="primary",
-                            size="lg",
-                        )
-
-                    with gr.Column(scale=1):
-                        gr.Markdown("### Output")
-
-                        status_output = gr.Textbox(
-                            label="Status",
-                            lines=10,
-                            interactive=False,
-                            elem_classes=["stage-info"],
-                        )
-
-                        video_output = gr.Video(
-                            label="Dubbed Video",
-                        )
-
-                        audio_output = gr.Audio(
-                            label="Dubbed Audio",
-                        )
-
-                        subtitle_output = gr.File(
-                            label="Subtitles",
-                        )
-
-                process_btn.click(
-                    fn=process_single_video,
-                    inputs=[
-                        video_input,
-                        target_lang,
-                        narrator_style_input,
-                        whisper_model_input,
-                        embed_subs,
-                        sub_format,
-                        bg_volume,
-                        gemini_key,
-                    ],
-                    outputs=[
-                        video_output,
-                        audio_output,
-                        subtitle_output,
-                        status_output,
-                    ],
-                )
-
-            # ── Tab 2: Batch Processing ──
-            with gr.Tab("Batch Dubbing", id="batch"):
-                with gr.Row():
-                    with gr.Column(scale=1):
-                        gr.Markdown("### Batch Upload")
-
-                        batch_videos = gr.File(
-                            label="Upload Videos (up to 25)",
-                            file_count="multiple",
-                            file_types=["video"],
-                        )
-
-                        batch_target_lang = gr.Dropdown(
-                            choices=LANGUAGE_CHOICES,
-                            value="hi",
-                            label="Target Language",
-                        )
-
-                        batch_narrator_style = gr.Dropdown(
-                            choices=NARRATOR_STYLES,
-                            value="documentary",
-                            label="Narrator Style",
-                        )
-
-                        max_concurrent = gr.Slider(
-                            minimum=1,
-                            maximum=25,
-                            value=4,
-                            step=1,
-                            label="Max Concurrent Jobs",
-                            info="Number of videos to process simultaneously",
-                        )
-
-                        with gr.Accordion("Advanced Settings", open=False):
-                            batch_whisper = gr.Dropdown(
-                                choices=WHISPER_MODELS,
-                                value="base",
-                                label="Whisper Model",
-                            )
-
-                            batch_embed_subs = gr.Checkbox(
-                                value=False,
-                                label="Embed Subtitles",
-                            )
-
-                            batch_sub_format = gr.Dropdown(
-                                choices=SUBTITLE_FORMATS,
-                                value="srt",
-                                label="Subtitle Format",
-                            )
-
-                            batch_bg_volume = gr.Slider(
-                                minimum=0,
-                                maximum=50,
-                                value=15,
-                                step=1,
-                                label="Background Volume (%)",
-                            )
-
-                            batch_gemini_key = gr.Textbox(
-                                label="Gemini API Key",
-                                type="password",
-                                placeholder="Gemini API key",
-                            )
-
-                        batch_btn = gr.Button(
-                            "Start Batch Dubbing",
-                            variant="primary",
-                            size="lg",
-                        )
-
-                    with gr.Column(scale=1):
-                        gr.Markdown("### Batch Results")
-
-                        batch_status = gr.Textbox(
-                            label="Batch Status",
-                            lines=20,
-                            interactive=False,
-                            elem_classes=["stage-info"],
-                        )
-
-                batch_btn.click(
-                    fn=process_batch_videos,
-                    inputs=[
-                        batch_videos,
-                        batch_target_lang,
-                        batch_narrator_style,
-                        batch_whisper,
-                        batch_embed_subs,
-                        batch_sub_format,
-                        batch_bg_volume,
-                        batch_gemini_key,
-                        max_concurrent,
-                    ],
-                    outputs=[batch_status],
-                )
-
-            # ── Tab 3: Real-Time Logs ──
-            with gr.Tab("Logs", id="logs"):
-                gr.Markdown("### Real-Time Processing Logs")
-
-                log_output = gr.Textbox(
-                    label="Log Output",
-                    lines=25,
-                    interactive=False,
-                    elem_classes=["log-panel"],
-                    value="No log messages yet. Process a video to see real-time logs.",
-                )
-
-                with gr.Row():
-                    refresh_logs_btn = gr.Button("Refresh Logs", size="sm")
-                    clear_logs_btn = gr.Button("Clear Logs", size="sm", variant="secondary")
-
-                refresh_logs_btn.click(fn=get_real_time_logs, outputs=[log_output])
-                clear_logs_btn.click(fn=clear_logs, outputs=[log_output])
-
-            # ── Tab 4: Models & Voices ──
-            with gr.Tab("Models & Voices", id="models"), gr.Row():
-                with gr.Column():
-                    gr.Markdown("### Model Manager")
-                    gr.Markdown(
-                        "Models are downloaded automatically when first needed. "
-                        "Check status below to see which models are available."
-                    )
-
-                    model_status = gr.Textbox(
-                        label="Model Status",
-                        lines=12,
-                        interactive=False,
-                        value=get_model_status(),
-                    )
-                    model_refresh_btn = gr.Button("Refresh Status", size="sm")
-                    model_refresh_btn.click(fn=get_model_status, outputs=[model_status])
-
-                with gr.Column():
-                    gr.Markdown("### Voice Library")
-                    voice_info = gr.Textbox(
-                        label="Available Voices",
-                        lines=12,
-                        interactive=False,
-                        value=get_voice_library_info(),
-                    )
-                    voice_refresh_btn = gr.Button("Refresh", size="sm")
-                    voice_refresh_btn.click(fn=get_voice_library_info, outputs=[voice_info])
-
-            # ── Tab 5: System Info ──
-            with gr.Tab("System Info", id="system"):
-                gr.Markdown("### Hardware & System Information")
-
-                sys_info = gr.Textbox(
-                    label="System Details",
-                    lines=10,
-                    interactive=False,
-                    value=get_system_info(),
-                )
-
-                refresh_btn = gr.Button("Refresh", size="sm")
-                refresh_btn.click(fn=get_system_info, outputs=[sys_info])
-
-                gr.Markdown(
-                    """
-                    ### Pipeline Stages
-                    """
-                    + "\n".join(f"{i+1}. {stage}" for i, stage in enumerate(PIPELINE_STAGES))
-                    + """
-
-                    ### Supported Languages
-                    """
-                    + ", ".join(f"{name} ({code})" for code, name in sorted(SUPPORTED_LANGUAGES.items(), key=lambda x: x[1]))
-                    + """
-
-                    ### Voice Engines
-                    - **Qwen3-TTS** — Best for Asian and Middle Eastern languages
-                    - **Chatterbox** — Best for cinematic English, Spanish, Portuguese, Italian
-                    - **LuxTTS** — Best for calm European narration (French, Dutch, Swedish, Danish)
-
-                    All engines fall back to Microsoft Edge TTS when native models are unavailable.
-                    """
-                )
-
-        gr.Markdown(
-            f"""
-            ---
-            *{__app_name__} v{__version__} — Professional AI Documentary Dubbing Platform*
-            """,
-        )
-
-    return app
-
-
-def main():
-    """Launch the Dubbing Studio application."""
-    logger.info("Starting %s v%s ...", __app_name__, __version__)
-
-    # Pre-check models
-    manager = ModelManager()
-    manager.preload_essential_models()
-
-    app = create_ui()
-    app.launch(
-        server_name="0.0.0.0",
-        server_port=7860,
-        share=False,
-        show_error=True,
-    )
-
+        if file:
+            self.video_file = file
+            self.video_path_lbl.setText(file)
+
+    def log(self, msg):
+        self.log_output.append(msg)
+        # Scroll to bottom
+        scrollbar = self.log_output.verticalScrollBar()
+        scrollbar.setValue(scrollbar.maximum())
+
+    def start_dubbing(self):
+        if not self.video_file:
+            self.log("ERROR: Please select a video file first.")
+            return
+            
+        api_key = self.api_key_input.text().strip()
+        if not api_key and not os.environ.get("GEMINI_API_KEY"):
+            self.log("ERROR: Gemini API Key is missing. Please provide it.")
+            return
+
+        # Configure
+        if api_key:
+            self.config.translation.api_key = api_key
+            os.environ["GEMINI_API_KEY"] = api_key
+            
+        self.config.whisper.model_size = self.whisper_cb.currentText()
+        self.config.subtitle.embed_in_video = self.embed_chk.isChecked()
+        
+        target_lang = self.lang_cb.currentData()
+        narrator = self.style_cb.currentText()
+        
+        self.log(f"Starting dubbing to {self.lang_cb.currentText()} - Style: {narrator}")
+        self.start_btn.setEnabled(False)
+        self.progress_bar.setValue(0)
+        self.status_label.setText("Initializing...")
+        
+        self.worker = WorkerThread(self.config, self.video_file, target_lang, narrator)
+        self.worker.progress_update.connect(self.on_progress)
+        self.worker.finished.connect(self.on_finished)
+        self.worker.error.connect(self.on_error)
+        self.worker.start()
+        
+    def on_progress(self, stage, progress):
+        self.status_label.setText(stage)
+        self.progress_bar.setValue(int(progress * 100))
+        pct = int(progress * 100)
+        self.log(f"[{pct:3d}%] {stage}")
+        
+    def on_finished(self, result):
+        self.start_btn.setEnabled(True)
+        self.status_label.setText("Completed")
+        self.progress_bar.setValue(100)
+        self.log("="*40)
+        self.log("Dubbing Complete!")
+        self.log(f"Source Language: {result.source_language}")
+        self.log(f"Target Language: {result.target_language}")
+        self.log(f"Total Segments: {result.total_segments}")
+        self.log(f"Processing Time: {result.processing_time:.1f}s")
+        self.log(f"Output Video: {result.output_video_path}")
+        self.log("="*40)
+        
+    def on_error(self, err_msg):
+        self.start_btn.setEnabled(True)
+        self.status_label.setText("Failed")
+        self.log(f"ERROR: {err_msg}")
 
 if __name__ == "__main__":
-    main()
+    app = QApplication(sys.argv)
+    # Set app wide dark style base
+    app.setStyle("Fusion")
+    window = DubbingStudioGUI()
+    window.show()
+    sys.exit(app.exec())
