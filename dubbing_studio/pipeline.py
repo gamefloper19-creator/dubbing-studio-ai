@@ -146,6 +146,11 @@ class DubbingPipeline:
                 progress_callback(stage, progress)
 
         try:
+            # ── Pre-flight Validation ──
+            from dubbing_studio.validation import validate_video_file, validate_language
+            validate_video_file(video_path)
+            validate_language(target_language)
+
             # ── Stage 1: Audio Extraction ──
             report_progress("Audio Extraction", 0.0)
             raw_audio = str(work_dir / "raw_audio.wav")

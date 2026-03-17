@@ -15,6 +15,7 @@ from PyQt6.QtGui import QFont, QPalette, QColor, QIcon
 # Import dubbing studio components
 from dubbing_studio.config import AppConfig, SUPPORTED_LANGUAGES
 from dubbing_studio.pipeline import DubbingPipeline
+from dubbing_studio.models.manager import ModelManager
 from dubbing_studio import __app_name__, __version__
 import logging
 
@@ -28,25 +29,52 @@ class WorkerThread(QThread):
     finished = pyqtSignal(object)
     error = pyqtSignal(str)
     
-    def __init__(self, config, video_path, target_language, narrator_style):
+    def __init__(self, config, video_path, target_language, narrator_style, yt_url=None):
         super().__init__()
         self.config = config
         self.video_path = video_path
         self.target_language = target_language
         self.narrator_style = narrator_style
+        self.yt_url = yt_url
         
     def run(self):
         try:
-            pipeline = DubbingPipeline(self.config)
-            
+            # Wire Model Manager to pre-check components
+            manager = ModelManager()
+            manager.preload_essential_models()
+        
             def progress_callback(stage: str, progress: float):
                 self.progress_update.emit(stage, progress)
-                
+
+            input_path = self.video_path
+            
+            # If YouTube URL provided, download it first
+            if self.yt_url:
+                self.progress_update.emit("Downloading YouTube Video", 0.0)
+                from dubbing_studio.youtube.pipeline import YouTubeDubbingPipeline
+                yt_pipeline = YouTubeDubbingPipeline()
+                download_dir = os.path.join(self.config.temp_dir, "downloads")
+                input_path, metadata = yt_pipeline.download_video(
+                    self.yt_url, 
+                    download_dir, 
+                    lambda p, msg: self.progress_update.emit(f"Downloading: {msg}", p)
+                )
+
+            pipeline = DubbingPipeline(self.config)
+
+            # Extra kwargs matching our modifications in pipeline.py
+            kwargs = {}
+            if hasattr(self.config, "_use_diarization") and self.config._use_diarization:
+                kwargs["use_diarization"] = True
+            if hasattr(self.config, "_voice_profile_id") and self.config._voice_profile_id:
+                kwargs["voice_profile_id"] = self.config._voice_profile_id
+
             result = pipeline.process_video(
-                video_path=self.video_path,
+                video_path=input_path,
                 target_language=self.target_language,
                 narrator_style=self.narrator_style,
-                progress_callback=progress_callback
+                progress_callback=progress_callback,
+                **kwargs
             )
             self.finished.emit(result)
         except Exception as e:
@@ -62,6 +90,10 @@ class DubbingStudioGUI(QMainWindow):
         self.config = AppConfig.from_env()
         self.config.setup_dirs()
         self.worker = None
+
+        # Pre-warm Model Manager
+        self.model_manager = ModelManager()
+        self.model_manager.preload_essential_models()
 
     def setup_theme(self):
         # Dark Neon Theme
@@ -186,15 +218,26 @@ class DubbingStudioGUI(QMainWindow):
     def setup_single_tab(self, tab):
         layout = QVBoxLayout(tab)
         
-        # Video Input
-        upload_group = QGroupBox("Input Video")
-        upload_layout = QHBoxLayout(upload_group)
+        # Video Input / Source
+        upload_group = QGroupBox("Input Source")
+        upload_layout = QVBoxLayout(upload_group)
+        
+        local_layout = QHBoxLayout()
         self.video_path_lbl = QLabel("No video selected")
         self.video_path_lbl.setStyleSheet("color: #aaaaaa;")
         btn_browse = QPushButton("Browse Video...")
         btn_browse.clicked.connect(self.browse_video)
-        upload_layout.addWidget(btn_browse)
-        upload_layout.addWidget(self.video_path_lbl, 1)
+        local_layout.addWidget(btn_browse)
+        local_layout.addWidget(self.video_path_lbl, 1)
+        upload_layout.addLayout(local_layout)
+        
+        yt_layout = QHBoxLayout()
+        yt_layout.addWidget(QLabel("Or YouTube URL:"))
+        self.yt_url_input = QLineEdit()
+        self.yt_url_input.setPlaceholderText("https://youtube.com/watch?v=...")
+        yt_layout.addWidget(self.yt_url_input, 1)
+        upload_layout.addLayout(yt_layout)
+        
         layout.addWidget(upload_group)
         
         # Settings
@@ -243,6 +286,10 @@ class DubbingStudioGUI(QMainWindow):
         self.privacy_chk.setToolTip("Disables fallback to cloud TTS (Edge TTS) ensuring 100% local operation")
         adv_layout.addWidget(self.privacy_chk)
         
+        self.diarize_chk = QCheckBox("Multi-Speaker Diarization")
+        self.diarize_chk.setToolTip("Detects multiple speakers and assigns unique voices")
+        adv_layout.addWidget(self.diarize_chk)
+        
         settings_layout.addWidget(adv_group)
         layout.addWidget(settings_group)
         
@@ -271,8 +318,9 @@ class DubbingStudioGUI(QMainWindow):
         scrollbar.setValue(scrollbar.maximum())
 
     def start_dubbing(self):
-        if not self.video_file:
-            self.log("ERROR: Please select a video file first.")
+        yt_url = self.yt_url_input.text().strip()
+        if not self.video_file and not yt_url:
+            self.log("ERROR: Please select a video file or enter a YouTube URL.")
             return
             
         api_key = self.api_key_input.text().strip()
@@ -301,12 +349,16 @@ class DubbingStudioGUI(QMainWindow):
         else:
             os.environ.pop("DUBBING_DISABLE_CLOUD_TTS", None)
         
+        # Pass advanced checks into config (pipeline reads these later)
+        self.config._use_diarization = self.diarize_chk.isChecked()
+        self.config._voice_profile_id = None  # Future enhancement: combo box to select pre-cloned profiles
+
         self.log(f"Starting dubbing to {self.lang_cb.currentText()} - Style: {narrator}")
         self.start_btn.setEnabled(False)
         self.progress_bar.setValue(0)
         self.status_label.setText("Initializing...")
         
-        self.worker = WorkerThread(self.config, self.video_file, target_lang, narrator)
+        self.worker = WorkerThread(self.config, self.video_file, target_lang, narrator, yt_url)
         self.worker.progress_update.connect(self.on_progress)
         self.worker.finished.connect(self.on_finished)
         self.worker.error.connect(self.on_error)

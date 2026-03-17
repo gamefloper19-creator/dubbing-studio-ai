@@ -102,6 +102,27 @@ class AudioExtractor:
 
         Path(output_path).parent.mkdir(parents=True, exist_ok=True)
 
+        # Try Demucs for high-quality background extraction
+        try:
+            import torch  # Demucs requires PyTorch
+            cmd_demucs = [
+                "demucs", "--two-stems=vocals", "-o", str(Path(output_path).parent),
+                video_path
+            ]
+            logger.info("Trying Demucs for background extraction...")
+            result = subprocess.run(cmd_demucs, capture_output=True, text=True)
+            if result.returncode == 0:
+                # Demucs usually creates: <output_dir>/htdemucs/<filename>/no_vocals.wav
+                video_name = Path(video_path).stem
+                demucs_out = Path(output_path).parent / "htdemucs" / video_name / "no_vocals.wav"
+                if demucs_out.exists():
+                    import shutil
+                    shutil.copy(str(demucs_out), output_path)
+                    logger.info("Successfully extracted background with Demucs")
+                    return output_path
+        except Exception as e:
+            logger.warning("Demucs extraction failed/unavailable: %s", e)
+
         # Use FFmpeg's afftdn for basic vocal reduction
         # This is a simple approach; for production, use a dedicated vocal remover
         cmd = [

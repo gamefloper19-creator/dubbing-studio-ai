@@ -153,7 +153,7 @@ class BatchProcessor:
             List of completed BatchJob objects.
         """
         self._progress_callback = progress_callback
-        max_workers = min(self.config.max_concurrent, len(self._jobs))
+        max_workers = max(1, min(self.config.max_concurrent, len(self._jobs)))
 
         logger.info(
             "Starting batch processing: %d jobs, %d concurrent",
