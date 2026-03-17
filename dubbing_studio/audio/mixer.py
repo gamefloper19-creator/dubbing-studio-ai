@@ -97,7 +97,13 @@ class AudioMixer:
         """
         bg_vol = self.config.background_volume
         duck_ratio = self.config.ducking_ratio
+        threshold_db = self.config.ducking_threshold
         crossfade = self.config.crossfade_duration
+
+        # Map ratio to compressor ratio (>1 means stronger ducking)
+        ratio = max(1.0, 1.0 / max(duck_ratio, 0.01))
+        attack_ms = max(1, int(crossfade * 1000))
+        release_ms = max(1, int(crossfade * 1000))
 
         # Use sidechaincompress for automatic ducking
         cmd = [
@@ -108,7 +114,7 @@ class AudioMixer:
                 f"[1:a]volume={bg_vol}[bg];"
                 f"[0:a]asplit=2[narr][sc];"
                 f"[bg][sc]sidechaincompress="
-                f"threshold=0.01:ratio=20:attack=50:release=300"
+                f"threshold={threshold_db}:ratio={ratio:.2f}:attack={attack_ms}:release={release_ms}"
                 f"[ducked_bg];"
                 f"[narr][ducked_bg]amix=inputs=2:duration=longest"
                 f":dropout_transition=2"

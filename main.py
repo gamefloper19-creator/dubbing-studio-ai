@@ -4,8 +4,9 @@ Dubbing Studio - Main Entry Point
 
 Usage:
     python main.py                  # Launch Gradio GUI
-    python main.py --cli VIDEO      # CLI mode for single video
-    python main.py --batch DIR      # CLI mode for batch processing
+    python main.py gui              # Launch Gradio GUI (explicit)
+    python main.py dub VIDEO        # CLI mode for single video
+    python main.py batch DIR        # CLI mode for batch processing
 """
 
 import argparse
@@ -55,15 +56,15 @@ def cli_single(args: argparse.Namespace) -> None:
     def progress_cb(stage: str, progress: float) -> None:
         bar_len = 30
         filled = int(bar_len * progress)
-        bar = "█" * filled + "░" * (bar_len - filled)
+        bar = "#" * filled + "-" * (bar_len - filled)
         print(f"\r  [{bar}] {progress*100:5.1f}% | {stage}", end="", flush=True)
 
     print(f"\n{__app_name__} v{__version__}")
-    print(f"{'═' * 50}")
+    print(f"{'=' * 50}")
     print(f"Input:    {args.video}")
     print(f"Language: {SUPPORTED_LANGUAGES.get(args.language, args.language)}")
     print(f"Style:    {args.narrator_style or 'documentary'}")
-    print(f"{'═' * 50}\n")
+    print(f"{'=' * 50}\n")
 
     result = pipeline.process_video(
         video_path=args.video,
@@ -73,7 +74,7 @@ def cli_single(args: argparse.Namespace) -> None:
         output_dir=args.output_dir,
     )
 
-    print(f"\n\n{'═' * 50}")
+    print(f"\n\n{'=' * 50}")
     print(f"Dubbing Complete!")
     print(f"  Source:     {result.source_language}")
     print(f"  Target:     {result.target_language}")
@@ -84,7 +85,7 @@ def cli_single(args: argparse.Namespace) -> None:
     print(f"  Audio:      {result.output_audio_path}")
     for fmt, path in result.subtitle_paths.items():
         print(f"  Subtitles:  {path}")
-    print(f"{'═' * 50}\n")
+    print(f"{'=' * 50}\n")
 
 
 def cli_batch(args: argparse.Namespace) -> None:
@@ -120,12 +121,12 @@ def cli_batch(args: argparse.Namespace) -> None:
         sys.exit(1)
 
     print(f"\n{__app_name__} v{__version__} - Batch Mode")
-    print(f"{'═' * 50}")
+    print(f"{'=' * 50}")
     print(f"Directory: {args.batch_dir}")
     print(f"Videos:    {len(video_files)}")
     print(f"Language:  {SUPPORTED_LANGUAGES.get(args.language, args.language)}")
     print(f"Concurrent: {config.batch.max_concurrent}")
-    print(f"{'═' * 50}\n")
+    print(f"{'=' * 50}\n")
 
     batch.add_videos(video_files, args.language, args.narrator_style or "documentary")
 
@@ -142,7 +143,7 @@ def cli_batch(args: argparse.Namespace) -> None:
         progress_callback=on_progress,
     )
 
-    print(f"\n\n{'═' * 50}")
+    print(f"\n\n{'=' * 50}")
     print("Batch Complete!")
     for job in jobs:
         status = "DONE" if job.status.value == "completed" else "FAIL"
@@ -151,7 +152,7 @@ def cli_batch(args: argparse.Namespace) -> None:
             print(f"  [{status}] {name} -> {job.output_path}")
         else:
             print(f"  [{status}] {name}: {job.error_message[:80]}")
-    print(f"{'═' * 50}\n")
+    print(f"{'=' * 50}\n")
 
 
 def main():
@@ -205,7 +206,7 @@ def main():
     )
     cli_parser.add_argument(
         "-w", "--whisper-model",
-        choices=["tiny", "base", "medium", "large-v3"],
+        choices=["auto", "tiny", "base", "medium", "large-v3"],
         default="base",
         help="Whisper model size",
     )
@@ -241,7 +242,7 @@ def main():
     )
     batch_parser.add_argument(
         "-w", "--whisper-model",
-        choices=["tiny", "base", "medium", "large-v3"],
+        choices=["auto", "tiny", "base", "medium", "large-v3"],
         default="base",
     )
     batch_parser.add_argument(

@@ -145,7 +145,7 @@ class TimingAligner:
                 method="speed",
             )
 
-        # Method 3: Force speed even if outside preferred range
+        # Method 3: Clamp speed even if outside preferred range
         clamped_speed = max(self.config.speed_min, min(self.config.speed_max, speed_factor))
         self._adjust_speed(audio_path, output_path, clamped_speed)
         adjusted_duration = self._get_duration(output_path)
@@ -153,13 +153,28 @@ class TimingAligner:
 
         self._cleanup(audio_path + ".trimmed.wav")
 
+        if deviation_ms <= self.config.max_deviation_ms or not self.config.allow_sentence_compression:
+            return TimingAdjustment(
+                original_duration=current_duration,
+                generated_duration=current_duration,
+                adjusted_duration=adjusted_duration,
+                deviation_ms=deviation_ms,
+                speed_factor=clamped_speed,
+                method="speed_clamped",
+            )
+
+        # Method 4: Sentence compression (force exact speed)
+        self._adjust_speed(audio_path, output_path, speed_factor)
+        adjusted_duration = self._get_duration(output_path)
+        deviation_ms = abs(adjusted_duration - target_duration) * 1000
+
         return TimingAdjustment(
             original_duration=current_duration,
             generated_duration=current_duration,
             adjusted_duration=adjusted_duration,
             deviation_ms=deviation_ms,
-            speed_factor=clamped_speed,
-            method="speed_clamped",
+            speed_factor=speed_factor,
+            method="speed_forced",
         )
 
     def _lengthen_audio(
@@ -187,7 +202,22 @@ class TimingAligner:
                 method="speed",
             )
 
-        # Method 2: Add pause at the end
+        # Method 2: Sentence expansion (force exact speed)
+        if self.config.allow_sentence_compression:
+            self._adjust_speed(audio_path, output_path, speed_factor)
+            adjusted_duration = self._get_duration(output_path)
+            deviation_ms = abs(adjusted_duration - target_duration) * 1000
+
+            return TimingAdjustment(
+                original_duration=current_duration,
+                generated_duration=current_duration,
+                adjusted_duration=adjusted_duration,
+                deviation_ms=deviation_ms,
+                speed_factor=speed_factor,
+                method="speed_forced",
+            )
+
+        # Method 3: Add pause at the end
         if self.config.allow_pause_insertion:
             pause_duration = target_duration - current_duration
             self._add_pause(audio_path, output_path, pause_duration)
@@ -203,7 +233,7 @@ class TimingAligner:
                 method="pad",
             )
 
-        # Method 3: Slow down as much as allowed and pad the rest
+        # Method 4: Slow down as much as allowed and pad the rest
         clamped_speed = self.config.speed_min
         temp_path = output_path + ".temp.wav"
         self._adjust_speed(audio_path, temp_path, clamped_speed)

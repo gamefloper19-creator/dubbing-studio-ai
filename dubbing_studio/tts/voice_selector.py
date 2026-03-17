@@ -79,12 +79,20 @@ class VoiceSelector:
         # Try to get the requested engine, fall back to alternatives
         engine = self._get_available_engine(engine_name, target_language)
 
+        voice_id = self._pick_voice_id(
+            engine=engine,
+            language=target_language,
+            gender=voice_info.get("gender"),
+            style=voice_info.get("style"),
+        )
+
         voice_config = {
             "gender": voice_info.get("gender", "male"),
             "style": voice_info.get("style", "documentary"),
             "speed": self.config.speed,
             "pitch": self.config.pitch,
             "language": target_language,
+            "voice_id": voice_id,
         }
 
         logger.info(
@@ -94,6 +102,36 @@ class VoiceSelector:
         )
 
         return engine, voice_config
+
+    def _pick_voice_id(
+        self,
+        engine: TTSEngine,
+        language: str,
+        gender: str | None,
+        style: str | None,
+    ) -> str | None:
+        """Pick the best matching voice id from engine voice list."""
+        try:
+            voices = engine.list_voices(language)
+        except Exception:
+            voices = []
+
+        if not voices:
+            return None
+
+        def score(voice: dict) -> int:
+            s = 0
+            if gender and voice.get("gender") == gender:
+                s += 2
+            if style and voice.get("style") == style:
+                s += 1
+            langs = voice.get("languages", [])
+            if language and language in langs:
+                s += 1
+            return s
+
+        best = max(voices, key=score)
+        return best.get("id")
 
     def _get_available_engine(
         self,

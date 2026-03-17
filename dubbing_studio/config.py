@@ -24,10 +24,10 @@ class AudioConfig:
 @dataclass
 class WhisperConfig:
     """Whisper speech recognition configuration."""
-    model_size: str = "base"  # tiny, base, medium, large-v3
+    model_size: str = "base"  # tiny, base, medium, large-v3, auto
     device: str = "auto"  # auto, cpu, cuda
     language: Optional[str] = None  # None = auto-detect
-    compute_type: str = "auto"  # auto, float16, int8
+    compute_type: str = "auto"  # auto, float16, float32, int8 (int8 not supported by openai-whisper)
     beam_size: int = 5
     vad_filter: bool = True
 
@@ -35,7 +35,7 @@ class WhisperConfig:
 @dataclass
 class TranslationConfig:
     """Translation engine configuration."""
-    provider: str = "gemini"  # gemini, openai, local
+    provider: str = "gemini"  # gemini
     api_key: str = ""
     model: str = "gemini-2.0-flash"
     temperature: float = 0.7
@@ -199,8 +199,8 @@ class AppConfig:
         config.output_dir = os.environ.get("DUBBING_OUTPUT_DIR", "output")
         config.temp_dir = os.environ.get("DUBBING_TEMP_DIR", "temp")
 
-        whisper_model = os.environ.get("WHISPER_MODEL", "base")
-        if whisper_model in ("tiny", "base", "medium", "large-v3"):
+        whisper_model = os.environ.get("WHISPER_MODEL", "base").strip().lower()
+        if whisper_model in ("tiny", "base", "medium", "large-v3", "auto"):
             config.whisper.model_size = whisper_model
 
         return config

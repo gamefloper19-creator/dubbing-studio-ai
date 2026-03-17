@@ -25,7 +25,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# ── Global state ──
+# -- Global state --
 _config: Optional[AppConfig] = None
 _pipeline: Optional[DubbingPipeline] = None
 _batch_processor: Optional[BatchProcessor] = None
@@ -58,14 +58,14 @@ def get_hardware_info():
     return _hardware_info
 
 
-# ── Language options ──
+# -- Language options --
 LANGUAGE_CHOICES = [(name, code) for code, name in sorted(SUPPORTED_LANGUAGES.items(), key=lambda x: x[1])]
 NARRATOR_STYLES = ["documentary", "cinematic", "calm", "storytelling"]
-WHISPER_MODELS = ["tiny", "base", "medium", "large-v3"]
+WHISPER_MODELS = ["auto", "tiny", "base", "medium", "large-v3"]
 SUBTITLE_FORMATS = ["srt", "vtt", "ass"]
 
 
-# ── Processing functions ──
+# -- Processing functions --
 
 def process_single_video(
     video_file,
@@ -121,7 +121,7 @@ def process_single_video(
         # Build status summary
         summary = (
             f"Dubbing Complete!\n"
-            f"─────────────────────────────\n"
+            f"-----------------------------\n"
             f"Source Language: {result.source_language}\n"
             f"Target Language: {result.target_language}\n"
             f"Segments: {result.total_segments}\n"
@@ -202,7 +202,7 @@ def process_batch_videos(
     status_lines = [f"Batch Processing: {len(video_paths)} videos"]
     status_lines.append(f"Target Language: {SUPPORTED_LANGUAGES.get(target_language, target_language)}")
     status_lines.append(f"Max Concurrent: {max_concurrent}")
-    status_lines.append("─" * 40)
+    status_lines.append("-" * 40)
 
     def on_batch_progress(batch_progress):
         progress(
@@ -227,7 +227,7 @@ def process_batch_videos(
                 status_lines.append(f"  [{status}] {video_name}: {job.error_message[:100]}")
 
         batch_info = batch.get_progress()
-        status_lines.append("─" * 40)
+        status_lines.append("-" * 40)
         status_lines.append(
             f"Results: {batch_info.completed_jobs} completed, "
             f"{batch_info.failed_jobs} failed"
@@ -260,7 +260,7 @@ def get_system_info():
         return f"Hardware detection error: {e}"
 
 
-# ── Build Gradio Interface ──
+# -- Build Gradio Interface --
 
 def create_ui() -> gr.Blocks:
     """Create the Gradio web interface."""
@@ -294,7 +294,7 @@ def create_ui() -> gr.Blocks:
 
         with gr.Tabs():
 
-            # ── Tab 1: Single Video ──
+            # -- Tab 1: Single Video --
             with gr.Tab("Single Video Dubbing", id="single"):
                 with gr.Row():
                     with gr.Column(scale=1):
@@ -401,7 +401,7 @@ def create_ui() -> gr.Blocks:
                     ],
                 )
 
-            # ── Tab 2: Batch Processing ──
+            # -- Tab 2: Batch Processing --
             with gr.Tab("Batch Dubbing", id="batch"):
                 with gr.Row():
                     with gr.Column(scale=1):
@@ -498,7 +498,7 @@ def create_ui() -> gr.Blocks:
                     outputs=[batch_status],
                 )
 
-            # ── Tab 3: System Info ──
+            # -- Tab 3: System Info --
             with gr.Tab("System Info", id="system"):
                 gr.Markdown("### Hardware & System Information")
 
@@ -525,9 +525,9 @@ def create_ui() -> gr.Blocks:
                     + """
 
                     ### Voice Engines
-                    - **Qwen3-TTS** — Best for Asian and Middle Eastern languages
-                    - **Chatterbox** — Best for cinematic English, Spanish, Portuguese, Italian
-                    - **LuxTTS** — Best for calm European narration (French, Dutch, Swedish, Danish)
+                    - **Qwen3-TTS** - Best for Asian and Middle Eastern languages
+                    - **Chatterbox** - Best for cinematic English, Spanish, Portuguese, Italian
+                    - **LuxTTS** - Best for calm European narration (French, Dutch, Swedish, Danish)
 
                     All engines fall back to Microsoft Edge TTS when native models are unavailable.
                     """
@@ -536,7 +536,7 @@ def create_ui() -> gr.Blocks:
         gr.Markdown(
             f"""
             ---
-            *{__app_name__} v{__version__} — Professional AI Documentary Dubbing Platform*
+            *{__app_name__} v{__version__} - Professional AI Documentary Dubbing Platform*
             """,
         )
 

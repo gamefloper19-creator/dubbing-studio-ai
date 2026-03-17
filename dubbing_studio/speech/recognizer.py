@@ -39,6 +39,8 @@ class SpeechRecognizer:
         self.config = config or WhisperConfig()
         self._model = None
         self._optimizer = HardwareOptimizer()
+        self._device = "cpu"
+        self._fp16 = False
 
     def _load_model(self) -> None:
         """Load Whisper model with hardware-appropriate settings."""
@@ -69,12 +71,36 @@ class SpeechRecognizer:
             else:
                 model_size = "base"
 
+        self._device = device
+        self._fp16 = self._resolve_fp16(device)
+
         logger.info(
             "Loading Whisper model '%s' on device '%s'",
             model_size, device,
         )
         self._model = whisper.load_model(model_size, device=device)
         logger.info("Whisper model loaded successfully")
+
+    def _resolve_fp16(self, device: str) -> bool:
+        """Resolve fp16 usage from compute_type and device."""
+        compute = (self.config.compute_type or "auto").lower()
+
+        if compute in ("float16", "fp16", "auto"):
+            return device == "cuda"
+
+        if compute in ("float32", "fp32"):
+            return False
+
+        if compute == "int8":
+            logger.warning(
+                "compute_type=int8 is not supported by openai-whisper; using float32"
+            )
+            return False
+
+        logger.warning(
+            "Unknown compute_type '%s'; falling back to auto", self.config.compute_type
+        )
+        return device == "cuda"
 
     def transcribe_audio(
         self,
@@ -98,6 +124,7 @@ class SpeechRecognizer:
             "beam_size": self.config.beam_size,
             "word_timestamps": True,
             "verbose": False,
+            "fp16": self._fp16,
         }
 
         if language or self.config.language:
@@ -108,6 +135,13 @@ class SpeechRecognizer:
 
         segments = []
         for i, seg in enumerate(result.get("segments", [])):
+            if not self._is_speech_segment(seg):
+                logger.debug(
+                    "Skipping non-speech segment (no_speech_prob=%.2f, avg_logprob=%.2f)",
+                    seg.get("no_speech_prob", 0.0),
+                    seg.get("avg_logprob", 0.0),
+                )
+                continue
             segments.append(TranscriptionSegment(
                 segment_id=f"{i + 1:03d}",
                 start_time=seg["start"],
@@ -130,6 +164,17 @@ class SpeechRecognizer:
             detected_language=detected_lang,
             full_text=full_text,
         )
+
+    def _is_speech_segment(self, seg: dict) -> bool:
+        """Filter out non-speech segments if vad_filter is enabled."""
+        if not self.config.vad_filter:
+            return True
+
+        no_speech_prob = seg.get("no_speech_prob", 0.0)
+        avg_logprob = seg.get("avg_logprob", 0.0)
+
+        # Heuristic consistent with Whisper defaults
+        return not (no_speech_prob > 0.6 and avg_logprob < -1.0)
 
     def transcribe_segments(
         self,

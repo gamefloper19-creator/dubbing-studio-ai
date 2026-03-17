@@ -204,7 +204,9 @@ class DubbingPipeline:
                     text=seg.translated_text,
                     output_path=tts_path,
                     language=target_language,
+                    voice_id=voice_config.get("voice_id"),
                     speed=voice_config.get("speed", 1.0),
+                    pitch=voice_config.get("pitch", 1.0),
                 )
                 tts_audio_paths.append({
                     "audio_path": tts_result.audio_path,

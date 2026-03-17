@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Optional
 
 from dubbing_studio.tts.engine import TTSEngine, TTSResult
+from dubbing_studio.tts.audio_utils import apply_pitch_shift
 
 logger = logging.getLogger(__name__)
 
@@ -59,16 +60,23 @@ class ChatterboxTTS(TTSEngine):
         language: str = "en",
         voice_id: Optional[str] = None,
         speed: float = 1.0,
+        pitch: float = 1.0,
     ) -> TTSResult:
         """Generate speech using Chatterbox TTS."""
         Path(output_path).parent.mkdir(parents=True, exist_ok=True)
 
         # Try native model first
         if self._model is not None or self._try_load():
-            return self._generate_with_model(text, output_path, language, speed)
+            result = self._generate_with_model(text, output_path, language, speed)
+        else:
+            # Fallback to edge-tts
+            result = self._generate_with_fallback(text, output_path, language, speed, voice_id)
 
-        # Fallback to edge-tts
-        return self._generate_with_fallback(text, output_path, language, speed)
+        if pitch != 1.0:
+            apply_pitch_shift(result.audio_path, pitch)
+            result.duration = self._get_audio_duration(result.audio_path)
+
+        return result
 
     def _try_load(self) -> bool:
         """Try to load model, return False if unavailable."""
@@ -118,6 +126,7 @@ class ChatterboxTTS(TTSEngine):
         output_path: str,
         language: str,
         speed: float,
+        voice_id: Optional[str] = None,
     ) -> TTSResult:
         """Fallback to edge-tts."""
         try:
@@ -136,7 +145,7 @@ class ChatterboxTTS(TTSEngine):
             "fr": "fr-FR-HenriNeural",
         }
 
-        voice = voice_map.get(language, "en-US-ChristopherNeural")
+        voice = voice_id or voice_map.get(language, "en-US-ChristopherNeural")
         rate_str = f"+{int((speed - 1) * 100)}%" if speed >= 1 else f"{int((speed - 1) * 100)}%"
 
         async def _generate():

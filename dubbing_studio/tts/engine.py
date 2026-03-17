@@ -42,6 +42,7 @@ class TTSEngine(ABC):
         language: str = "en",
         voice_id: Optional[str] = None,
         speed: float = 1.0,
+        pitch: float = 1.0,
     ) -> TTSResult:
         """
         Generate speech from text.
@@ -52,6 +53,7 @@ class TTSEngine(ABC):
             language: Language code.
             voice_id: Optional specific voice ID.
             speed: Speech speed multiplier.
+            pitch: Pitch multiplier (1.0 = no change).
 
         Returns:
             TTSResult with audio information.
