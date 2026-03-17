@@ -158,10 +158,10 @@ class SpeechRecognizer:
 
             result = self.transcribe_audio(seg.file_path, language)
 
-            for tseg in result.segments:
-                # Adjust timing to absolute position
+            for idx, tseg in enumerate(result.segments):
+                # Adjust timing to absolute position and ensure unique segment_id
                 all_transcriptions.append(TranscriptionSegment(
-                    segment_id=seg.segment_id,
+                    segment_id=f"{seg.segment_id}_{idx+1:03d}",
                     start_time=seg.start_time + tseg.start_time,
                     end_time=seg.start_time + tseg.end_time,
                     text=tseg.text,

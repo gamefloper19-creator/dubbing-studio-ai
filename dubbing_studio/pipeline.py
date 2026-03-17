@@ -195,7 +195,7 @@ class DubbingPipeline:
             emotion_profiles: list[EmotionProfile] = []
             if self.config.emotion.enabled:
                 emotion_segments = [
-                    {"text": seg.text, "audio_path": seg.audio_path}
+                    {"text": seg.text}
                     for seg in transcription_segments
                 ]
                 emotion_profiles = self.emotion_analyzer.analyze_segments(

@@ -97,13 +97,19 @@ class VideoRenderer:
         """Render video with dubbed audio and burned-in subtitles."""
         sub_ext = Path(subtitle_path).suffix.lower()
 
+        # Escape path for FFmpeg on Windows
+        # Replace \ with \\, and escape : as \:
+        safe_path = Path(subtitle_path).absolute().as_posix()
+        # Ensure Windows drive letter colons are escaped properly in FFmpeg filters
+        safe_path = str(safe_path).replace(":", r"\:")
+
         if sub_ext == ".ass":
             # ASS subtitles with styling
-            subtitle_filter = f"ass='{subtitle_path}'"
+            subtitle_filter = f"ass='{safe_path}'"
         else:
             # SRT/VTT subtitles
             subtitle_filter = (
-                f"subtitles='{subtitle_path}'"
+                f"subtitles='{safe_path}'"
                 f":force_style='FontSize={self.subtitle_config.font_size},"
                 f"PrimaryColour=&H00FFFFFF,"
                 f"OutlineColour=&H00000000,"

@@ -115,7 +115,7 @@ class HardwareOptimizer:
             import torch
             if torch.cuda.is_available():
                 props = torch.cuda.get_device_properties(0)
-                return props.total_mem // (1024 * 1024)
+                return props.total_memory // (1024 * 1024)
         except ImportError:
             pass
 
