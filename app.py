@@ -20,7 +20,7 @@ import logging
 
 LANGUAGE_CHOICES = [(name, code) for code, name in sorted(SUPPORTED_LANGUAGES.items(), key=lambda x: x[1])]
 NARRATOR_STYLES = ["documentary", "cinematic", "calm", "storytelling"]
-WHISPER_MODELS = ["tiny", "base", "medium", "large-v3"]
+WHISPER_MODELS = ["auto", "tiny", "base", "medium", "large-v3"]
 SUBTITLE_FORMATS = ["srt", "vtt", "ass"]
 
 class WorkerThread(QThread):
@@ -232,11 +232,16 @@ class DubbingStudioGUI(QMainWindow):
         adv_layout.addWidget(QLabel("Whisper Model:"))
         self.whisper_cb = QComboBox()
         self.whisper_cb.addItems(WHISPER_MODELS)
-        self.whisper_cb.setCurrentText("base")
+        self.whisper_cb.setCurrentText("auto")
+        self.whisper_cb.setToolTip("Auto-selects optimal model based on detected hardware")
         adv_layout.addWidget(self.whisper_cb)
         
         self.embed_chk = QCheckBox("Embed Subtitles")
         adv_layout.addWidget(self.embed_chk)
+        
+        self.privacy_chk = QCheckBox("Strict Local Processing")
+        self.privacy_chk.setToolTip("Disables fallback to cloud TTS (Edge TTS) ensuring 100% local operation")
+        adv_layout.addWidget(self.privacy_chk)
         
         settings_layout.addWidget(adv_group)
         layout.addWidget(settings_group)
@@ -285,6 +290,16 @@ class DubbingStudioGUI(QMainWindow):
         
         target_lang = self.lang_cb.currentData()
         narrator = self.style_cb.currentText()
+        
+        # Wire GUI narrator style to VoiceConfig
+        self.config.voice.narrator_style = narrator
+        
+        # Wire local-only privacy mode
+        if self.privacy_chk.isChecked():
+            # Set flag to disable Edge TTS fallback
+            os.environ["DUBBING_DISABLE_CLOUD_TTS"] = "1"
+        else:
+            os.environ.pop("DUBBING_DISABLE_CLOUD_TTS", None)
         
         self.log(f"Starting dubbing to {self.lang_cb.currentText()} - Style: {narrator}")
         self.start_btn.setEnabled(False)

@@ -50,7 +50,7 @@ pip install TTS               # LuxTTS (Coqui TTS)
 
 ```bash
 python app.py
-# Opens at http://localhost:7860
+# Opens the native Dark Neon desktop application window
 ```
 
 ### CLI Usage

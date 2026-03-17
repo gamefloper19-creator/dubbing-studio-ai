@@ -68,6 +68,14 @@ class LuxTTS(TTSEngine):
         if self._model is not None or self._try_load():
             return self._generate_with_model(text, output_path, language, speed)
 
+        # Check Privacy Mode
+        import os
+        if os.environ.get("DUBBING_DISABLE_CLOUD_TTS") == "1":
+            raise RuntimeError(
+                "Strict Local Processing is enabled, but the local LuxTTS model failed to load. "
+                "Cloud fallback (Edge TTS) is disabled for privacy."
+            )
+
         # Fallback to edge-tts
         return self._generate_with_fallback(text, output_path, language, speed)
 

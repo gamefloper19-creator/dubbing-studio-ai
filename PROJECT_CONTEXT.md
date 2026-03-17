@@ -46,7 +46,7 @@ dubbing_studio/
 
 | File | Purpose |
 |------|---------|
-| `app.py` | Gradio web interface (default at `http://localhost:7860`) |
+| `app.py` | PyQt6 Native Desktop GUI (Dark Neon Theme) |
 | `main.py` | CLI entry point with subcommands: `gui`, `dub`, `batch` |
 
 ## Pipeline Flow
@@ -71,7 +71,7 @@ Upload Video
 
 | Component | Technology |
 |-----------|------------|
-| Web UI | Gradio 4.x |
+| Desktop GUI | PyQt6 |
 | Speech Recognition | OpenAI Whisper |
 | Translation | Google Gemini API |
 | TTS (Asian/ME) | Qwen3-TTS (Transformers) |
