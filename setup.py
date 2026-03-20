@@ -14,6 +14,7 @@ setup(
     python_requires=">=3.10",
     packages=find_packages(),
     install_requires=[
+        "PyQt6",
         "gradio>=4.0.0",
         "openai-whisper>=20231117",
         "google-generativeai>=0.5.0",

@@ -1,6 +1,9 @@
 # Dubbing Studio - Dependencies
 # ================================
 
+# GUI
+PyQt6
+
 # Core
 gradio>=4.0.0
 
