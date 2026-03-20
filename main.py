@@ -1,12 +1,7 @@
 #!/usr/bin/env python3
 """
 Dubbing Studio - Main Entry Point
-
-Usage:
-    python main.py                  # Launch Gradio GUI
-    python main.py gui              # Launch Gradio GUI (explicit)
-    python main.py dub VIDEO        # CLI mode for single video
-    python main.py batch DIR        # CLI mode for batch processing
+Professional AI Documentary Dubbing Platform.
 """
 
 import argparse
@@ -172,16 +167,8 @@ def main():
 
     subparsers = parser.add_subparsers(dest="command")
 
-    # GUI command (default)
-    gui_parser = subparsers.add_parser("gui", help="Launch GUI interface")
-    gui_parser.add_argument(
-        "--port", type=int, default=7860,
-        help="Server port (default: 7860)",
-    )
-    gui_parser.add_argument(
-        "--share", action="store_true",
-        help="Create a public shareable link",
-    )
+    # GUI command
+    subparsers.add_parser("gui", help="Launch Native PyQt6 GUI")
 
     # CLI single video
     cli_parser = subparsers.add_parser("dub", help="Dub a single video")
@@ -258,18 +245,12 @@ def main():
         cli_single(args)
     elif args.command == "batch":
         cli_batch(args)
+    elif args.command == "gui" or args.command is None:
+        # Launch Native PyQt6 GUI
+        from app import run_gui
+        run_gui()
     else:
-        # Default: launch GUI
-        from app import create_ui
-        app = create_ui()
-        port = getattr(args, "port", 7860)
-        share = getattr(args, "share", False)
-        app.launch(
-            server_name="0.0.0.0",
-            server_port=port,
-            share=share,
-            show_error=True,
-        )
+        parser.print_help()
 
 
 if __name__ == "__main__":
